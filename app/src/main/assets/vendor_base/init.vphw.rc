@@ -1,0 +1,64 @@
+# Virtual Phone Hardware (vphw) Init Script for VM Go
+# Compatible with Android 9 / 10 / 11 / 12 / 13
+
+on early-init
+    # Set init OOM score
+    write /proc/1/oom_score_adj -1000
+
+    # Mount fake dev and proc if needed
+    mkdir /dev/socket 0775 root system
+    mkdir /dev/graphics 0755 root graphics
+    mkdir /dev/input 0755 root input
+
+on init
+    # Symlinks for standard Android layout
+    symlink /system/bin /bin
+    symlink /system/etc /etc
+    symlink /system/vendor /vendor
+
+    # Backward compatibility
+    mkdir /mnt/sdcard 0700 root root
+    symlink /mnt/sdcard /sdcard
+
+    # Start basic virtual daemons
+    start ueventd
+    start servicemanager
+    start hwservicemanager
+
+on post-fs
+    # Permissions for virtual devices
+    chmod 0666 /dev/qemu_pipe
+    chmod 0666 /dev/goldfish_pipe
+    chmod 0666 /dev/ashmem
+    chmod 0666 /dev/input/event0
+    chmod 0666 /dev/input/event1
+
+on boot
+    # Network and hostname
+    setprop net.dns1 8.8.8.8
+    setprop net.dns2 8.8.4.4
+    setprop net.gprs.local-ip 10.0.2.15
+
+    # Start core compositor and zygote
+    start surfaceflinger
+    start zygote
+
+# Service: SurfaceFlinger
+service surfaceflinger /system/bin/surfaceflinger
+    class core animation
+    user system
+    group graphics drmrpc readproc
+    capabilities SYS_NICE
+    onrestart restart zygote
+    task_profiles HighPerformance
+
+# Service: Zygote 64-bit
+service zygote /system/bin/app_process64 -Xzygote /system/bin --zygote --start-system-server --socket-name=zygote
+    class main
+    priority -20
+    user root
+    group root readproc reserved_disk
+    socket zygote stream 660 root system
+    socket usap_pool_primary stream 660 root system
+    onrestart restart surfaceflinger
+    task_profiles ProcessCapacityHigh MaxPerformance

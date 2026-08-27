@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Modern Dark Glassmorphism Palette -->
+    <color name="bg_primary">#0B0E14</color>
+    <color name="bg_surface">#151A23</color>
+    <color name="bg_card">#1E2430</color>
+    <color name="bg_card_highlight">#283040</color>
+
+    <color name="accent_cyan">#00E5FF</color>
+    <color name="accent_blue">#2979FF</color>
+    <color name="accent_emerald">#00E676</color>
+    <color name="accent_amber">#FFD600</color>
+    <color name="accent_rose">#FF1744</color>
+
+    <color name="text_primary">#F0F4F8</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_muted">#64748B</color>
+
+    <color name="border_subtle">#334155</color>
+    <color name="nav_bar_bg">#10141C</color>
+</resources>

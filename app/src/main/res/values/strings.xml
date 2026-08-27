@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">VM Go</string>
+    <string name="tagline">Universal Native Android Virtualization</string>
+    <string name="gsi_importer_title">Import Custom GSI ROM</string>
+    <string name="gsi_importer_desc">Select any ARM64 AOSP / LineageOS / PixelOS GSI (.img, .xz, .zip)</string>
+    <string name="slots_title">Virtual Machines</string>
+    <string name="create_vm">Create New VM</string>
+    <string name="status_stopped">Stopped</string>
+    <string name="status_running">Running</string>
+    <string name="status_starting">Booting OS...</string>
+    <string name="start_vm">Start</string>
+    <string name="stop_vm">Stop</string>
+    <string name="configure_vm">Settings</string>
+    <string name="delete_vm">Delete</string>
+    <string name="settings_title">VM Configuration</string>
+    <string name="hardware_settings">Display &amp; Hardware</string>
+    <string name="identity_settings">Device Identity Spoofing</string>
+    <string name="addons_settings">Modular Add-ons</string>
+    <string name="enable_magisk">Enable Magisk Root</string>
+    <string name="enable_gapps">Enable Google Play Services (GApps)</string>
+    <string name="save_config">Save Configuration</string>
+</resources>

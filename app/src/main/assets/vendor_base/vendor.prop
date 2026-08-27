@@ -1,0 +1,23 @@
+# Virtual Hardware Properties for VM Go
+ro.hardware=vphw
+ro.product.vendor.brand=VMGo
+ro.product.vendor.name=vphw_arm64
+ro.product.vendor.device=vphw
+ro.product.vendor.model=VM Go Virtual Platform
+ro.product.vendor.manufacturer=VMGo
+
+# Virtual Graphics & SurfaceFlinger
+ro.sf.lcd_density=480
+qemu.hw.mainkeys=0
+debug.sf.nobootanimation=0
+ro.opengles.version=131072
+ro.kernel.qemu=1
+ro.kernel.qemu.gles=1
+ro.hardware.gralloc=default
+ro.hardware.hwcomposer=vphw
+
+# Networking & Telephony
+gsm.version.baseband=VMGO_VIRTUAL_RADIO_1.0
+ro.telephony.default_network=9
+net.dns1=8.8.8.8
+net.dns2=8.8.4.4

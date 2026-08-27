@@ -1,0 +1,14 @@
+# Virtual Device Node Permissions for VM Go
+
+/dev/qemu_pipe            0666   root       root
+/dev/goldfish_pipe        0666   root       root
+/dev/ashmem               0666   root       root
+/dev/binder               0666   root       root
+/dev/hwbinder             0666   root       root
+/dev/vndbinder            0666   root       root
+/dev/input/event*         0666   root       input
+/dev/graphics/fb*         0666   system     graphics
+/dev/null                 0666   root       root
+/dev/zero                 0666   root       root
+/dev/urandom              0666   root       root
+/dev/random               0666   root       root

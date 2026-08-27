@@ -9,6 +9,7 @@ import android.os.IBinder
 import com.vmgo.app.core.NativeVmEngine
 import com.vmgo.app.model.VmConfig
 import com.vmgo.app.util.ApexExtractor
+import com.vmgo.app.util.AppLogger
 import com.vmgo.app.util.OverlayManager
 import com.vmgo.app.util.StorageUtil
 import kotlinx.coroutines.*
@@ -36,14 +37,15 @@ class GsiImportService : Service() {
     ) {
         serviceScope.launch {
             try {
-                withContext(Dispatchers.Main) { onProgress(10, "Preparing slot directories...") }
+                withContext(Dispatchers.Main) { onProgress(5, "Preparing slot directories...") }
                 val config = StorageUtil.prepareSlotDirectories(context, slotId)
                 val tempDir = File(context.cacheDir, "gsi_import").apply { mkdirs() }
                 val tempFile = File(tempDir, "temp_imported_gsi.img")
 
-                withContext(Dispatchers.Main) { onProgress(25, "Reading GSI image...") }
+                withContext(Dispatchers.Main) { onProgress(20, "Reading GSI image...") }
                 val inputStream: InputStream? = context.contentResolver.openInputStream(sourceUri)
                 if (inputStream == null) {
+                    AppLogger.e("GsiImportService", "Cannot open input stream for URI: $sourceUri")
                     withContext(Dispatchers.Main) { onComplete(false, null) }
                     return@launch
                 }
@@ -58,45 +60,61 @@ class GsiImportService : Service() {
                 outputStream.close()
                 inputStream.close()
 
-                withContext(Dispatchers.Main) { onProgress(60, "Analyzing filesystem format...") }
-                val targetRawFile = File(config.systemPath, "system.raw.img")
+                withContext(Dispatchers.Main) { onProgress(45, "Checking image format (Sparse vs Raw)...") }
+                val rawImageFile = File(tempDir, "system_raw_temp.img")
 
                 val isSparse = NativeVmEngine.nativeIsSparseImage(tempFile.absolutePath)
                 if (isSparse) {
-                    withContext(Dispatchers.Main) { onProgress(75, "Converting Sparse image to raw ext4...") }
-                    val success = NativeVmEngine.nativeUnsparseImage(
+                    withContext(Dispatchers.Main) { onProgress(55, "Converting Sparse image to raw ext4...") }
+                    val unsparseSuccess = NativeVmEngine.nativeUnsparseImage(
                         tempFile.absolutePath,
-                        targetRawFile.absolutePath
+                        rawImageFile.absolutePath
                     )
-                    if (!success) {
+                    tempFile.delete()
+                    if (!unsparseSuccess) {
+                        AppLogger.e("GsiImportService", "Failed to unsparse image")
                         withContext(Dispatchers.Main) { onComplete(false, null) }
                         return@launch
                     }
                 } else {
-                    tempFile.copyTo(targetRawFile, overwrite = true)
+                    tempFile.renameTo(rawImageFile)
                 }
-                tempFile.delete()
 
-                // Extract APEX Modules for Android 10/11/12+ Runtimes
+                // 3. Extract ext4 filesystem partitions and system binaries
+                withContext(Dispatchers.Main) { onProgress(70, "Extracting ext4 filesystem (bin, lib64, framework)...") }
+                val extractSuccess = NativeVmEngine.nativeExtractExt4Image(
+                    rawImageFile.absolutePath,
+                    config.systemPath
+                )
+
+                // Also keep raw image file for block reference if needed
+                val finalRawFile = File(config.systemPath, "system.raw.img")
+                rawImageFile.renameTo(finalRawFile)
+
+                if (!extractSuccess) {
+                    AppLogger.w("GsiImportService", "Ext4 directory extraction had notices, continuing with raw image")
+                }
+
+                // 4. Extract APEX Modules for Android 10/11/12+ Runtimes
                 withContext(Dispatchers.Main) { onProgress(85, "Extracting APEX runtime modules...") }
                 ApexExtractor.extractApexModules(
                     systemDir = File(config.systemPath),
                     apexTargetDir = File(config.apexPath),
                     onProgress = { status ->
-                        // Optional progress status
+                        // Optional APEX progress
                     }
                 )
 
-                // Deploy Virtual Vendor & Root Overlays
+                // 5. Deploy Virtual Vendor & Root Overlays
                 withContext(Dispatchers.Main) { onProgress(95, "Configuring Virtual Vendor & Overlays...") }
                 OverlayManager.applyOverlays(context, config)
 
                 withContext(Dispatchers.Main) {
-                    onProgress(100, "GSI Imported Successfully!")
+                    onProgress(100, "GSI ROM Ready & Installed!")
                     onComplete(true, config)
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                AppLogger.fatal("GsiImportService", "Error during GSI import", e)
                 withContext(Dispatchers.Main) { onComplete(false, null) }
             }
         }

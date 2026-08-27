@@ -75,6 +75,8 @@ object NativeVmEngine {
 
     external fun nativeUnsparseImage(srcSparsePath: String, dstRawPath: String): Boolean
     external fun nativeIsSparseImage(filePath: String): Boolean
+    external fun nativeExtractExt4Image(imagePath: String, targetDir: String): Boolean
+    external fun nativeIsExt4Image(imagePath: String): Boolean
     external fun nativeGetEngineVersion(): String
     external fun nativeStopVm()
 

@@ -24,6 +24,7 @@ add_library(
     graphics/egl_renderer.cpp
     input/input_dispatcher.cpp
     storage/sparse_parser.cpp
+    storage/ext4_extractor.cpp
     jni/native_bridge.cpp
 )
 

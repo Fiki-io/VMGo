@@ -10,6 +10,7 @@
 #include "../graphics/egl_renderer.h"
 #include "../input/input_dispatcher.h"
 #include "../storage/sparse_parser.h"
+#include "../storage/ext4_extractor.h"
 
 #define JNI_CLASS_PATH "com/vmgo/app/core/NativeVmEngine"
 
@@ -244,6 +245,28 @@ Java_com_vmgo_app_core_NativeVmEngine_nativeGetEngineVersion(
 ) {
     std::string version = "VM Go Core Engine v1.0.0 (Native ARM64/ARM32 Seccomp+QEMUD)";
     return env->NewStringUTF(version.c_str());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_vmgo_app_core_NativeVmEngine_nativeExtractExt4Image(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jstring jImagePath,
+    jstring jTargetDir
+) {
+    std::string img = jstringToString(env, jImagePath);
+    std::string target = jstringToString(env, jTargetDir);
+    return Ext4Extractor::extractExt4Image(img, target) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_vmgo_app_core_NativeVmEngine_nativeIsExt4Image(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jstring jImagePath
+) {
+    std::string img = jstringToString(env, jImagePath);
+    return Ext4Extractor::isExt4Image(img) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

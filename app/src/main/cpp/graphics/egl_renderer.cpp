@@ -1,8 +1,12 @@
 #include "egl_renderer.h"
+
+#ifdef __ANDROID__
 #include <android/native_window_jni.h>
+#endif
 
 namespace vmgo {
 
+#ifdef __ANDROID__
 static const char* VERTEX_SHADER = R"(
     attribute vec4 a_Position;
     attribute vec2 a_TexCoord;
@@ -28,6 +32,7 @@ static const GLfloat VERTICES[] = {
      1.0f,  1.0f, 0.0f,   1.0f, 0.0f,
      1.0f, -1.0f, 0.0f,   1.0f, 1.0f
 };
+#endif
 
 EglRenderer& EglRenderer::getInstance() {
     static EglRenderer instance;
@@ -42,7 +47,9 @@ bool EglRenderer::initialize(ANativeWindow* window, int width, int height) {
     if (initialized_ && nativeWindow_ == window) {
         displayWidth_ = width;
         displayHeight_ = height;
+#ifdef __ANDROID__
         glViewport(0, 0, width, height);
+#endif
         return true;
     }
 
@@ -54,21 +61,25 @@ bool EglRenderer::initialize(ANativeWindow* window, int width, int height) {
     displayWidth_ = width;
     displayHeight_ = height;
 
-    // Set buffer geometry
+#ifdef __ANDROID__
     ANativeWindow_setBuffersGeometry(window, width, height, WINDOW_FORMAT_RGBA_8888);
+#endif
 
     if (!initEGL() || !initGL()) {
         destroy();
         return false;
     }
 
+#ifdef __ANDROID__
     glViewport(0, 0, width, height);
+#endif
     initialized_ = true;
     LOGI("EGL Renderer initialized successfully: %dx%d", width, height);
     return true;
 }
 
 bool EglRenderer::initEGL() {
+#ifdef __ANDROID__
     eglDisplay_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (eglDisplay_ == EGL_NO_DISPLAY) {
         LOGE("eglGetDisplay failed");
@@ -118,11 +129,12 @@ bool EglRenderer::initEGL() {
         LOGE("eglMakeCurrent failed");
         return false;
     }
-
+#endif
     return true;
 }
 
 bool EglRenderer::initGL() {
+#ifdef __ANDROID__
     GLuint vShader = compileShader(GL_VERTEX_SHADER, VERTEX_SHADER);
     GLuint fShader = compileShader(GL_FRAGMENT_SHADER, FRAGMENT_SHADER);
 
@@ -156,11 +168,12 @@ bool EglRenderer::initGL() {
     glClearColor(0.04f, 0.06f, 0.09f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     eglSwapBuffers(eglDisplay_, eglSurface_);
-
+#endif
     return true;
 }
 
 GLuint EglRenderer::compileShader(GLenum type, const char* source) {
+#ifdef __ANDROID__
     GLuint shader = glCreateShader(type);
     if (!shader) return 0;
 
@@ -182,10 +195,16 @@ GLuint EglRenderer::compileShader(GLenum type, const char* source) {
     }
 
     return shader;
+#else
+    (void)type;
+    (void)source;
+    return 0;
+#endif
 }
 
 void EglRenderer::renderFrame(const uint8_t* pixels, int width, int height, int format) {
     std::lock_guard<std::mutex> lock(renderMutex_);
+#ifdef __ANDROID__
     if (!initialized_ || !pixels || eglDisplay_ == EGL_NO_DISPLAY || eglSurface_ == EGL_NO_SURFACE) {
         return;
     }
@@ -228,9 +247,12 @@ void EglRenderer::renderFrame(const uint8_t* pixels, int width, int height, int 
     glDisableVertexAttribArray(texCoordLoc_);
 
     eglSwapBuffers(eglDisplay_, eglSurface_);
+#else
+    (void)pixels; (void)width; (void)height; (void)format;
+#endif
 }
 
-void EglRenderer::onSurfaceChanged(ANativeWindow* window, int width, int height) {
+void EglRenderer::updateSurface(ANativeWindow* window, int width, int height) {
     std::lock_guard<std::mutex> lock(renderMutex_);
     if (!window) return;
 
@@ -241,13 +263,16 @@ void EglRenderer::onSurfaceChanged(ANativeWindow* window, int width, int height)
     if (initialized_) {
         displayWidth_ = width;
         displayHeight_ = height;
+#ifdef __ANDROID__
         glViewport(0, 0, displayWidth_, displayHeight_);
+#endif
     }
 }
 
 void EglRenderer::destroy() {
     if (!initialized_) return;
 
+#ifdef __ANDROID__
     if (eglDisplay_ != EGL_NO_DISPLAY) {
         eglMakeCurrent(eglDisplay_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         if (eglSurface_ != EGL_NO_SURFACE) {
@@ -270,6 +295,7 @@ void EglRenderer::destroy() {
         glDeleteTextures(1, &textureId_);
         textureId_ = 0;
     }
+#endif
 
     nativeWindow_ = nullptr;
     initialized_ = false;

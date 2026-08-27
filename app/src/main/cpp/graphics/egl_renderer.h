@@ -2,10 +2,25 @@
 #define EGL_RENDERER_H
 
 #include "../include/vm_types.h"
+#include <mutex>
+
+#ifdef __ANDROID__
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <android/native_window.h>
-#include <mutex>
+#else
+typedef void* ANativeWindow;
+typedef void* EGLDisplay;
+typedef void* EGLSurface;
+typedef void* EGLContext;
+typedef void* EGLConfig;
+typedef unsigned int GLuint;
+typedef int GLint;
+typedef unsigned int GLenum;
+#define EGL_NO_DISPLAY ((void*)0)
+#define EGL_NO_SURFACE ((void*)0)
+#define EGL_NO_CONTEXT ((void*)0)
+#endif
 
 namespace vmgo {
 

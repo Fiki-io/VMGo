@@ -153,6 +153,7 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     uint64_t arg1 = uctx->uc_mcontext.regs[1];
     uint64_t arg2 = uctx->uc_mcontext.regs[2];
     uint64_t arg3 = uctx->uc_mcontext.regs[3];
+    (void)arg0;
 
     int64_t ret = 0;
 

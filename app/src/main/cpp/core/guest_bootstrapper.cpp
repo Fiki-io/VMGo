@@ -140,7 +140,7 @@ void GuestBootstrapper::setupEnvironment(const VmConfiguration& config) {
     setenv("VMGO_SLOT_ID", config.slotId.c_str(), 1);
     setenv("VMGO_DISPLAY_WIDTH", std::to_string(config.displayWidth).c_str(), 1);
     setenv("VMGO_DISPLAY_HEIGHT", std::to_string(config.displayHeight).c_str(), 1);
-    setenv("VMGO_DPI", std::to_string(config.dpi).c_str(), 1);
+    setenv("VMGO_DPI", std::to_string(config.displayDpi).c_str(), 1);
 
     // Hardware identifiers
     setenv("ANDROID_BOOTLOGO", "1", 1);
@@ -167,6 +167,7 @@ void GuestBootstrapper::startLogReader(int pipeFd) {
 }
 
 bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog) {
+    (void)onLog;
     if (running_ && guestPid_ > 0) {
         LOGW("Guest already running with PID %d", guestPid_);
         return true;
@@ -251,13 +252,13 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
 
         // Install Seccomp-BPF filter on THIS child process
         // All syscalls from this process will be intercepted by our trap handler
-        SeccompTrap::getInstance().install(config);
+        SeccompTrap::getInstance().installFilter();
 
         // Build argv based on what binary we found
         std::vector<const char*> argv;
         std::string widthStr = std::to_string(config.displayWidth);
         std::string heightStr = std::to_string(config.displayHeight);
-        std::string dpiStr = std::to_string(config.dpi);
+        std::string dpiStr = std::to_string(config.displayDpi);
 
         if (initBin.find("app_process") != std::string::npos) {
             // Launch as zygote (like VMOS does with app_process64)

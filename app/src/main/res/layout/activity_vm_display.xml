@@ -15,6 +15,63 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Animated Boot Overlay (UI View - No Surface Canvas Conflict) -->
+    <LinearLayout
+        android:id="@+id/bootOverlayLayout"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#0A0E17"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="24dp"
+        app:layout_constraintBottom_toTopOf="@id/navBar"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView
+            android:id="@+id/ivBootLogo"
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:src="@drawable/ic_vm" />
+
+        <TextView
+            android:id="@+id/tvBootTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="VM Go"
+            android:textColor="@color/accent_cyan"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <ProgressBar
+            android:id="@+id/pbBootLoading"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="200dp"
+            android:layout_height="6dp"
+            android:layout_marginTop="20dp"
+            android:indeterminate="true" />
+
+        <TextView
+            android:id="@+id/tvBootStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Starting Virtual Container..."
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tvBootSlotInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Slot 1 • 1080x1920 • ARM64"
+            android:textColor="#64748B"
+            android:textSize="11sp" />
+    </LinearLayout>
+
     <!-- Draggable Floating Action Ball -->
     <ImageView
         android:id="@+id/floatingBall"

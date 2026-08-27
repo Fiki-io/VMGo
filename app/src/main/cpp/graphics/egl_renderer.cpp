@@ -22,7 +22,6 @@ static const char* FRAGMENT_SHADER = R"(
     }
 )";
 
-// Full-screen quad (flipped vertically to match Android framebuffer coordinate system)
 static const GLfloat VERTICES[] = {
     -1.0f,  1.0f, 0.0f,   0.0f, 0.0f,
     -1.0f, -1.0f, 0.0f,   0.0f, 1.0f,
@@ -37,6 +36,16 @@ EglRenderer& EglRenderer::getInstance() {
 
 bool EglRenderer::initialize(ANativeWindow* window, int width, int height) {
     std::lock_guard<std::mutex> lock(renderMutex_);
+    if (!window) return false;
+
+    // If already initialized with the same window, just resize viewport
+    if (initialized_ && nativeWindow_ == window) {
+        displayWidth_ = width;
+        displayHeight_ = height;
+        glViewport(0, 0, width, height);
+        return true;
+    }
+
     if (initialized_) {
         destroy();
     }
@@ -45,11 +54,15 @@ bool EglRenderer::initialize(ANativeWindow* window, int width, int height) {
     displayWidth_ = width;
     displayHeight_ = height;
 
+    // Set buffer geometry
+    ANativeWindow_setBuffersGeometry(window, width, height, WINDOW_FORMAT_RGBA_8888);
+
     if (!initEGL() || !initGL()) {
         destroy();
         return false;
     }
 
+    glViewport(0, 0, width, height);
     initialized_ = true;
     LOGI("EGL Renderer initialized successfully: %dx%d", width, height);
     return true;
@@ -139,51 +152,70 @@ bool EglRenderer::initGL() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    glViewport(0, 0, displayWidth_, displayHeight_);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    // Initial clear with dark background
+    glClearColor(0.04f, 0.06f, 0.09f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    eglSwapBuffers(eglDisplay_, eglSurface_);
+
     return true;
 }
 
 GLuint EglRenderer::compileShader(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
+    if (!shader) return 0;
+
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
 
     GLint compiled = 0;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
-        char info[512];
-        glGetShaderInfoLog(shader, sizeof(info), nullptr, info);
-        LOGE("Shader compilation failed: %s", info);
+        GLint infoLen = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen);
+        if (infoLen > 0) {
+            std::vector<char> infoLog(infoLen);
+            glGetShaderInfoLog(shader, infoLen, nullptr, infoLog.data());
+            LOGE("Shader compilation error: %s", infoLog.data());
+        }
         glDeleteShader(shader);
         return 0;
     }
+
     return shader;
 }
 
-void EglRenderer::renderFrame(const uint8_t* pixelBuffer, int bufferWidth, int bufferHeight, int format) {
+void EglRenderer::renderFrame(const uint8_t* pixels, int width, int height, int format) {
     std::lock_guard<std::mutex> lock(renderMutex_);
-    if (!initialized_ || !pixelBuffer) return;
+    if (!initialized_ || !pixels || eglDisplay_ == EGL_NO_DISPLAY || eglSurface_ == EGL_NO_SURFACE) {
+        return;
+    }
 
     eglMakeCurrent(eglDisplay_, eglSurface_, eglSurface_, eglContext_);
-    glClear(GL_COLOR_BUFFER_BIT);
 
     glUseProgram(programId_);
+
+    // Upload pixel buffer
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, textureId_);
 
-    GLenum glFormat = (format == 4) ? GL_RGB565 : GL_RGBA;
+    GLenum glFormat = (format == 4) ? GL_RGB : GL_RGBA;
     GLenum glType = (format == 4) ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_BYTE;
 
-    if (textureWidth_ != bufferWidth || textureHeight_ != bufferHeight) {
-        glTexImage2D(GL_TEXTURE_2D, 0, glFormat, bufferWidth, bufferHeight, 0, glFormat, glType, pixelBuffer);
-        textureWidth_ = bufferWidth;
-        textureHeight_ = bufferHeight;
-    } else {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, bufferWidth, bufferHeight, glFormat, glType, pixelBuffer);
-    }
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        glFormat,
+        width,
+        height,
+        0,
+        glFormat,
+        glType,
+        pixels
+    );
 
     glUniform1i(samplerLoc_, 0);
 
+    // Pass quad coordinates
     glVertexAttribPointer(positionLoc_, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), VERTICES);
     glEnableVertexAttribArray(positionLoc_);
 
@@ -192,26 +224,23 @@ void EglRenderer::renderFrame(const uint8_t* pixelBuffer, int bufferWidth, int b
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
+    glDisableVertexAttribArray(positionLoc_);
+    glDisableVertexAttribArray(texCoordLoc_);
+
     eglSwapBuffers(eglDisplay_, eglSurface_);
 }
 
-void EglRenderer::updateSurface(ANativeWindow* window, int width, int height) {
+void EglRenderer::onSurfaceChanged(ANativeWindow* window, int width, int height) {
     std::lock_guard<std::mutex> lock(renderMutex_);
+    if (!window) return;
+
     if (nativeWindow_ == window && displayWidth_ == width && displayHeight_ == height) {
         return;
     }
 
     if (initialized_) {
-        eglMakeCurrent(eglDisplay_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (eglSurface_ != EGL_NO_SURFACE) {
-            eglDestroySurface(eglDisplay_, eglSurface_);
-        }
-        nativeWindow_ = window;
         displayWidth_ = width;
         displayHeight_ = height;
-
-        eglSurface_ = eglCreateWindowSurface(eglDisplay_, eglConfig_, nativeWindow_, nullptr);
-        eglMakeCurrent(eglDisplay_, eglSurface_, eglSurface_, eglContext_);
         glViewport(0, 0, displayWidth_, displayHeight_);
     }
 }

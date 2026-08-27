@@ -1,14 +1,12 @@
 package com.vmgo.app.ui
 
+import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Typeface
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.SurfaceHolder
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.vmgo.app.core.NativeVmEngine
@@ -17,15 +15,13 @@ import com.vmgo.app.model.VmConfig
 import com.vmgo.app.service.HalBridgeService
 import com.vmgo.app.util.AppLogger
 import kotlinx.coroutines.*
-import java.io.File
 
 class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     private lateinit var binding: ActivityVmDisplayBinding
     private var vmConfig: VmConfig? = null
     private var isVmInitialized = false
-    private var renderJob: Job? = null
-    private var isRunning = true
+    private val activityScope = CoroutineScope(Dispatchers.Main + Job())
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,15 +37,58 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
             return
         }
 
+        binding.tvBootSlotInfo.text = "${vmConfig?.name} • ${vmConfig?.displayWidth}x${vmConfig?.displayHeight} • ${vmConfig?.osVersion}"
+
         binding.vmSurfaceView.holder.addCallback(this)
         setupTouchForwarding()
         setupNavBar()
         setupFloatingBall()
+        startBootSequence()
 
         try {
             startService(Intent(this, HalBridgeService::class.java))
         } catch (e: Exception) {
             AppLogger.e("VmDisplayActivity", "Failed to start HalBridgeService", e)
+        }
+    }
+
+    private fun startBootSequence() {
+        // Pulsing logo animation
+        val pulseX = ObjectAnimator.ofFloat(binding.ivBootLogo, "scaleX", 0.9f, 1.1f).apply {
+            duration = 1000
+            repeatMode = ObjectAnimator.REVERSE
+            repeatCount = ObjectAnimator.INFINITE
+            start()
+        }
+        val pulseY = ObjectAnimator.ofFloat(binding.ivBootLogo, "scaleY", 0.9f, 1.1f).apply {
+            duration = 1000
+            repeatMode = ObjectAnimator.REVERSE
+            repeatCount = ObjectAnimator.INFINITE
+            start()
+        }
+
+        activityScope.launch {
+            binding.tvBootStatus.text = "Initializing VFS Sandbox..."
+            delay(400)
+            binding.tvBootStatus.text = "Mounting GSI Partitions (/system, /apex, /vendor)..."
+            delay(500)
+            binding.tvBootStatus.text = "Starting QEMU Pipe HAL Server..."
+            delay(400)
+            binding.tvBootStatus.text = "Connecting Display Compositor..."
+            delay(600)
+            binding.tvBootStatus.text = "VM Container Active & Running"
+
+            // Fade out overlay when ready
+            delay(1200)
+            binding.bootOverlayLayout.animate()
+                .alpha(0f)
+                .setDuration(500)
+                .withEndAction {
+                    binding.bootOverlayLayout.visibility = View.GONE
+                    pulseX.cancel()
+                    pulseY.cancel()
+                }
+                .start()
         }
     }
 
@@ -67,80 +106,8 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 config.displayWidth,
                 config.displayHeight
             )
-
-            // Start animated boot display
-            startBootDisplayLoop(holder, config)
         } catch (e: Throwable) {
             AppLogger.fatal("VmDisplayActivity", "Exception during VM surface initialization", e)
-        }
-    }
-
-    private fun startBootDisplayLoop(holder: SurfaceHolder, config: VmConfig) {
-        renderJob?.cancel()
-        renderJob = CoroutineScope(Dispatchers.Default).launch {
-            val bgPaint = Paint().apply { color = Color.parseColor("#0A0E17") }
-            val logoPaint = Paint().apply {
-                color = Color.parseColor("#00E5FF")
-                textSize = 72f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                textAlign = Paint.Align.CENTER
-                isAntiAlias = true
-            }
-            val statusPaint = Paint().apply {
-                color = Color.parseColor("#94A3B8")
-                textSize = 36f
-                textAlign = Paint.Align.CENTER
-                isAntiAlias = true
-            }
-            val glowPaint = Paint().apply {
-                color = Color.parseColor("#1A00E5FF")
-                isAntiAlias = true
-            }
-
-            var frameCount = 0
-            val statusMessages = listOf(
-                "Initializing VFS Sandbox...",
-                "Mounting GSI System Partition...",
-                "Starting Virtual Hardware HAL...",
-                "Connecting QEMU Pipe Server...",
-                "VM Container Active & Running"
-            )
-
-            while (isRunning && isActive) {
-                try {
-                    val canvas: Canvas? = holder.lockCanvas()
-                    if (canvas != null) {
-                        try {
-                            val w = canvas.width.toFloat()
-                            val h = canvas.height.toFloat()
-
-                            // Background
-                            canvas.drawRect(0f, 0f, w, h, bgPaint)
-
-                            // Glowing circle animation
-                            val pulse = (Math.sin(frameCount * 0.1) * 20).toFloat()
-                            canvas.drawCircle(w / 2f, h / 2f - 100f, 120f + pulse, glowPaint)
-
-                            // Logo
-                            canvas.drawText("VM Go", w / 2f, h / 2f - 80f, logoPaint)
-
-                            // Animated status
-                            val msgIdx = (frameCount / 30).coerceAtMost(statusMessages.size - 1)
-                            canvas.drawText(statusMessages[msgIdx], w / 2f, h / 2f + 40f, statusPaint)
-                            canvas.drawText("${config.osVersion} • ${config.displayWidth}x${config.displayHeight}", w / 2f, h / 2f + 100f, statusPaint)
-
-                        } finally {
-                            holder.unlockCanvasAndPost(canvas)
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Surface destroyed or locked
-                    break
-                }
-
-                frameCount++
-                delay(33) // ~30 FPS boot loop
-            }
         }
     }
 
@@ -153,7 +120,6 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        renderJob?.cancel()
         try {
             NativeVmEngine.nativeDestroySurface()
         } catch (e: Throwable) {
@@ -250,7 +216,7 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    Toast.makeText(this, "VM Go Active • Slot: ${vmConfig?.id}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "VM Go Active • ${vmConfig?.name}", Toast.LENGTH_SHORT).show()
                     true
                 }
                 else -> false
@@ -260,8 +226,7 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun onDestroy() {
         super.onDestroy()
-        isRunning = false
-        renderJob?.cancel()
+        activityScope.cancel()
         try {
             stopService(Intent(this, HalBridgeService::class.java))
             NativeVmEngine.nativeStopVm()

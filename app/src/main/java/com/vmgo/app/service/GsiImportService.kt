@@ -84,11 +84,19 @@ class GsiImportService : Service() {
                 withContext(Dispatchers.Main) { onProgress(70, "Extracting ext4 filesystem (bin, lib64, framework)...") }
                 val extractSuccess = NativeVmEngine.nativeExtractExt4Image(
                     rawImageFile.absolutePath,
-                    config.systemPath
+                    config.rootFsPath
                 )
 
+                // Also populate system directory if it was a system-as-root image
+                val rootfsSystem = File(config.rootFsPath, "system")
+                val finalSystemDir = if (rootfsSystem.exists() && rootfsSystem.isDirectory) {
+                    rootfsSystem
+                } else {
+                    File(config.systemPath)
+                }
+
                 // Also keep raw image file for block reference if needed
-                val finalRawFile = File(config.systemPath, "system.raw.img")
+                val finalRawFile = File(config.rootFsPath, "system.raw.img")
                 rawImageFile.renameTo(finalRawFile)
 
                 if (!extractSuccess) {
@@ -98,7 +106,7 @@ class GsiImportService : Service() {
                 // 4. Extract APEX Modules for Android 10/11/12+ Runtimes
                 withContext(Dispatchers.Main) { onProgress(85, "Extracting APEX runtime modules...") }
                 ApexExtractor.extractApexModules(
-                    systemDir = File(config.systemPath),
+                    systemDir = finalSystemDir,
                     apexTargetDir = File(config.apexPath),
                     onProgress = { status ->
                         // Optional APEX progress

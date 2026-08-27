@@ -251,7 +251,7 @@ static bool readInodeData(int fd, uint64_t blockSize, const Ext4Inode& inode,
             }
             if (bytesReadTotal >= fileSize) break;
         }
-        return bytesReadTotal >= fileSize;
+        return (bytesReadTotal > 0) || (fileSize == 0);
     } else {
         // Direct/indirect blocks (legacy, non-extent)
         // i_block[0..11] = direct block pointers
@@ -299,7 +299,7 @@ static bool readInodeData(int fd, uint64_t blockSize, const Ext4Inode& inode,
             }
         }
 
-        return bytesRead >= fileSize;
+        return (bytesRead > 0) || (fileSize == 0);
     }
 }
 

@@ -47,6 +47,12 @@ bool SparseParser::unsparse(const std::string& srcSparsePath, const std::string&
         return false;
     }
 
+    // Set file size upfront to support sparse holes cleanly
+    uint64_t totalOutputSize = static_cast<uint64_t>(header.total_blks) * header.blk_sz;
+    if (totalOutputSize > 0) {
+        ftruncate(outFd, totalOutputSize);
+    }
+
     // Skip extra header bytes if any
     if (header.file_hdr_sz > sizeof(SparseHeader)) {
         lseek(inFd, header.file_hdr_sz - sizeof(SparseHeader), SEEK_CUR);

@@ -80,6 +80,11 @@ object NativeVmEngine {
     external fun nativeGetEngineVersion(): String
     external fun nativeStopVm()
 
+    // Guest Process Launcher
+    external fun nativeLaunchGuest(slotId: String): Boolean
+    external fun nativeIsGuestAlive(): Boolean
+    external fun nativeKillGuest()
+
     fun initializeVm(config: VmConfig): Boolean {
         if (!isLibraryLoaded) {
             AppLogger.fatal("NativeVmEngine", "Cannot initialize VM: Native library is not loaded!")

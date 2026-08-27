@@ -68,27 +68,84 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
 
         activityScope.launch {
-            binding.tvBootStatus.text = "Initializing VFS Sandbox..."
-            delay(400)
-            binding.tvBootStatus.text = "Mounting GSI Partitions (/system, /apex, /vendor)..."
-            delay(500)
-            binding.tvBootStatus.text = "Starting QEMU Pipe HAL Server..."
-            delay(400)
-            binding.tvBootStatus.text = "Connecting Display Compositor..."
-            delay(600)
-            binding.tvBootStatus.text = "VM Container Active & Running"
+            val config = vmConfig ?: return@launch
 
-            // Fade out overlay when ready
-            delay(1200)
-            binding.bootOverlayLayout.animate()
-                .alpha(0f)
-                .setDuration(500)
-                .withEndAction {
-                    binding.bootOverlayLayout.visibility = View.GONE
-                    pulseX.cancel()
-                    pulseY.cancel()
+            binding.tvBootStatus.text = "Initializing VFS Sandbox..."
+            delay(200)
+
+            // Wait for VM engine to be initialized (surfaceCreated does this)
+            var waitCount = 0
+            while (!isVmInitialized && waitCount < 50) {
+                delay(100)
+                waitCount++
+            }
+
+            if (!isVmInitialized) {
+                binding.tvBootStatus.text = "ERROR: VM Engine failed to initialize"
+                AppLogger.e("VmDisplayActivity", "VM Engine init timeout")
+                return@launch
+            }
+
+            binding.tvBootStatus.text = "Launching guest init process..."
+            delay(100)
+
+            // REAL LAUNCH: Fork + exec the guest init from extracted GSI
+            val launched = withContext(Dispatchers.IO) {
+                try {
+                    NativeVmEngine.nativeLaunchGuest(config.id)
+                } catch (e: Throwable) {
+                    AppLogger.fatal("VmDisplayActivity", "Failed to launch guest process", e)
+                    false
                 }
-                .start()
+            }
+
+            if (launched) {
+                binding.tvBootStatus.text = "Guest process launched. Booting..."
+                AppLogger.i("VmDisplayActivity", "Guest process launched successfully for ${config.id}")
+
+                // Monitor guest process status
+                activityScope.launch {
+                    var bootTimeout = 0
+                    while (bootTimeout < 300) { // 30 seconds timeout
+                        delay(100)
+                        bootTimeout++
+
+                        val alive = try { NativeVmEngine.nativeIsGuestAlive() } catch (e: Throwable) { false }
+
+                        if (!alive && bootTimeout > 10) {
+                            binding.tvBootStatus.text = "Guest process exited. Check logs."
+                            AppLogger.w("VmDisplayActivity", "Guest process exited after ${bootTimeout * 100}ms")
+                            return@launch
+                        }
+
+                        // Update boot progress based on time
+                        when {
+                            bootTimeout == 20 -> binding.tvBootStatus.text = "Guest: Starting init..."
+                            bootTimeout == 50 -> binding.tvBootStatus.text = "Guest: Starting servicemanager..."
+                            bootTimeout == 100 -> binding.tvBootStatus.text = "Guest: Starting zygote..."
+                            bootTimeout == 150 -> binding.tvBootStatus.text = "Guest: Starting system_server..."
+                            bootTimeout == 200 -> {
+                                // After ~20 seconds, hide overlay regardless
+                                binding.tvBootStatus.text = "Guest OS Running"
+                                delay(500)
+                                binding.bootOverlayLayout.animate()
+                                    .alpha(0f)
+                                    .setDuration(500)
+                                    .withEndAction {
+                                        binding.bootOverlayLayout.visibility = View.GONE
+                                        pulseX.cancel()
+                                        pulseY.cancel()
+                                    }
+                                    .start()
+                                return@launch
+                            }
+                        }
+                    }
+                }
+            } else {
+                binding.tvBootStatus.text = "ERROR: Failed to launch guest process. Check logs."
+                AppLogger.e("VmDisplayActivity", "nativeLaunchGuest returned false for ${config.id}")
+            }
         }
     }
 

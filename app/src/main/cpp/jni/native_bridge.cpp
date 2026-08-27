@@ -11,6 +11,7 @@
 #include "../input/input_dispatcher.h"
 #include "../storage/sparse_parser.h"
 #include "../storage/ext4_extractor.h"
+#include "../core/guest_bootstrapper.h"
 
 #define JNI_CLASS_PATH "com/vmgo/app/core/NativeVmEngine"
 
@@ -269,11 +270,45 @@ Java_com_vmgo_app_core_NativeVmEngine_nativeIsExt4Image(
     return Ext4Extractor::isExt4Image(img) ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_vmgo_app_core_NativeVmEngine_nativeLaunchGuest(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jstring jSlotId
+) {
+    std::string slotId = jstringToString(env, jSlotId);
+    auto& vfs = VfsRouter::getInstance();
+    if (!vfs.isInitialized()) {
+        LOGE("Cannot launch guest: VFS Router not initialized");
+        return JNI_FALSE;
+    }
+    const VmConfiguration& config = vfs.getConfig();
+    bool ok = GuestBootstrapper::getInstance().launch(config);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_vmgo_app_core_NativeVmEngine_nativeIsGuestAlive(
+    JNIEnv* /* env */,
+    jobject /* thiz */
+) {
+    return GuestBootstrapper::getInstance().isAlive() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_vmgo_app_core_NativeVmEngine_nativeKillGuest(
+    JNIEnv* /* env */,
+    jobject /* thiz */
+) {
+    GuestBootstrapper::getInstance().kill();
+}
+
 JNIEXPORT void JNICALL
 Java_com_vmgo_app_core_NativeVmEngine_nativeStopVm(
     JNIEnv* /* env */,
     jobject /* thiz */
 ) {
+    GuestBootstrapper::getInstance().kill();
     QemuPipeServer::getInstance().stop();
     InputDispatcher::getInstance().shutdown();
     SeccompTrap::getInstance().uninstall();

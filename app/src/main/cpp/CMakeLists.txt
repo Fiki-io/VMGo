@@ -20,6 +20,7 @@ add_library(
     SHARED
     core/vfs_router.cpp
     core/seccomp_trap.cpp
+    core/guest_bootstrapper.cpp
     hal/qemu_pipe_server.cpp
     graphics/egl_renderer.cpp
     input/input_dispatcher.cpp

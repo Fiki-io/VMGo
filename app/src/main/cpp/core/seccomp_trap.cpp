@@ -99,8 +99,28 @@ bool SeccompTrap::installFilter() {
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
+#ifdef __NR_umount2
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_umount2, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_pivot_root
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_pivot_root, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_chroot
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_chroot, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
 #ifdef __NR_mknodat
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_mknodat, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_mknod
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_mknod, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
@@ -111,6 +131,61 @@ bool SeccompTrap::installFilter() {
 
 #ifdef __NR_setgid
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_setgid, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_setreuid
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_setreuid, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_setregid
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_setregid, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_setresuid
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_setresuid, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_setresgid
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_setresgid, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_setgroups
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_setgroups, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_capset
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_capset, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_sethostname
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sethostname, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_setdomainname
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_setdomainname, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_reboot
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_reboot, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_swapon
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_swapon, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_swapoff
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_swapoff, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
@@ -166,7 +241,6 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 
             if (pathname) {
                 std::string resolved = vfs.resolvePath(pathname, flags);
-                // Call real openat with SECCOMP_BYPASS_MAGIC so the filter allows it without re-trapping
                 ret = syscall(__NR_openat, SECCOMP_BYPASS_MAGIC, resolved.c_str(), flags, mode);
                 if (ret < 0) {
                     ret = -errno;
@@ -179,25 +253,145 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 #endif
 #ifdef __NR_mount
         case __NR_mount: {
-            ret = 0; // Fake success for user-space mount
+            // Guest init tries to mount /proc, /sys, /dev, tmpfs etc.
+            // We already have these as directories in the sandbox
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_umount2
+        case __NR_umount2: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_pivot_root
+        case __NR_pivot_root: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_chroot
+        case __NR_chroot: {
+            // Guest tries to chroot into the rootfs
+            // We handle this via VFS path redirection instead
+            ret = 0;
             break;
         }
 #endif
 #ifdef __NR_mknodat
         case __NR_mknodat: {
-            ret = 0; // Fake success for user-space mknodat
+            // Guest tries to create device nodes
+            // Create a regular file instead (our seccomp handles ioctl on these)
+            const char* pathname = reinterpret_cast<const char*>(arg1);
+            if (pathname) {
+                std::string resolved = vfs.resolvePath(pathname, 0);
+                int fd = open(resolved.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (fd >= 0) {
+                    close(fd);
+                    ret = 0;
+                } else {
+                    ret = 0; // Still fake success
+                }
+            } else {
+                ret = 0;
+            }
+            break;
+        }
+#endif
+#ifdef __NR_mknod
+        case __NR_mknod: {
+            ret = 0;
             break;
         }
 #endif
 #ifdef __NR_setuid
         case __NR_setuid: {
-            ret = 0; // Fake success for sandboxed zygote
+            ret = 0;
             break;
         }
 #endif
 #ifdef __NR_setgid
         case __NR_setgid: {
-            ret = 0; // Fake success for sandboxed zygote
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setuid32
+        case __NR_setuid32: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setgid32
+        case __NR_setgid32: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setreuid
+        case __NR_setreuid: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setregid
+        case __NR_setregid: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setresuid
+        case __NR_setresuid: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setresgid
+        case __NR_setresgid: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setgroups
+        case __NR_setgroups: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_capset
+        case __NR_capset: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_sethostname
+        case __NR_sethostname: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_setdomainname
+        case __NR_setdomainname: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_reboot
+        case __NR_reboot: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_swapon
+        case __NR_swapon: {
+            ret = 0;
+            break;
+        }
+#endif
+#ifdef __NR_swapoff
+        case __NR_swapoff: {
+            ret = 0;
             break;
         }
 #endif

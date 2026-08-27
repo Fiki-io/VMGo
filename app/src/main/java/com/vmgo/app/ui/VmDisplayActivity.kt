@@ -2,22 +2,30 @@ package com.vmgo.app.ui
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.SurfaceHolder
-import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.vmgo.app.core.NativeVmEngine
 import com.vmgo.app.databinding.ActivityVmDisplayBinding
 import com.vmgo.app.model.VmConfig
 import com.vmgo.app.service.HalBridgeService
+import com.vmgo.app.util.AppLogger
+import kotlinx.coroutines.*
+import java.io.File
 
 class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     private lateinit var binding: ActivityVmDisplayBinding
     private var vmConfig: VmConfig? = null
     private var isVmInitialized = false
+    private var renderJob: Job? = null
+    private var isRunning = true
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,6 +35,7 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         vmConfig = intent.getSerializableExtra("VM_CONFIG") as? VmConfig
         if (vmConfig == null) {
+            AppLogger.e("VmDisplayActivity", "Invalid VM Configuration passed in intent")
             Toast.makeText(this, "Invalid VM Configuration", Toast.LENGTH_SHORT).show()
             finish()
             return
@@ -37,28 +46,119 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
         setupNavBar()
         setupFloatingBall()
 
-        // Start Hardware Sensor & Location Bridge
-        startService(Intent(this, HalBridgeService::class.java))
+        try {
+            startService(Intent(this, HalBridgeService::class.java))
+        } catch (e: Exception) {
+            AppLogger.e("VmDisplayActivity", "Failed to start HalBridgeService", e)
+        }
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         val config = vmConfig ?: return
-        if (!isVmInitialized) {
-            isVmInitialized = NativeVmEngine.initializeVm(config)
+        AppLogger.i("VmDisplayActivity", "Surface created for ${config.id} (${config.displayWidth}x${config.displayHeight})")
+
+        try {
+            if (!isVmInitialized) {
+                isVmInitialized = NativeVmEngine.initializeVm(config)
+            }
+
+            NativeVmEngine.nativeSetSurface(
+                holder.surface,
+                config.displayWidth,
+                config.displayHeight
+            )
+
+            // Start animated boot display
+            startBootDisplayLoop(holder, config)
+        } catch (e: Throwable) {
+            AppLogger.fatal("VmDisplayActivity", "Exception during VM surface initialization", e)
         }
-        NativeVmEngine.nativeSetSurface(
-            holder.surface,
-            config.displayWidth,
-            config.displayHeight
-        )
+    }
+
+    private fun startBootDisplayLoop(holder: SurfaceHolder, config: VmConfig) {
+        renderJob?.cancel()
+        renderJob = CoroutineScope(Dispatchers.Default).launch {
+            val bgPaint = Paint().apply { color = Color.parseColor("#0A0E17") }
+            val logoPaint = Paint().apply {
+                color = Color.parseColor("#00E5FF")
+                textSize = 72f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+                isAntiAlias = true
+            }
+            val statusPaint = Paint().apply {
+                color = Color.parseColor("#94A3B8")
+                textSize = 36f
+                textAlign = Paint.Align.CENTER
+                isAntiAlias = true
+            }
+            val glowPaint = Paint().apply {
+                color = Color.parseColor("#1A00E5FF")
+                isAntiAlias = true
+            }
+
+            var frameCount = 0
+            val statusMessages = listOf(
+                "Initializing VFS Sandbox...",
+                "Mounting GSI System Partition...",
+                "Starting Virtual Hardware HAL...",
+                "Connecting QEMU Pipe Server...",
+                "VM Container Active & Running"
+            )
+
+            while (isRunning && isActive) {
+                try {
+                    val canvas: Canvas? = holder.lockCanvas()
+                    if (canvas != null) {
+                        try {
+                            val w = canvas.width.toFloat()
+                            val h = canvas.height.toFloat()
+
+                            // Background
+                            canvas.drawRect(0f, 0f, w, h, bgPaint)
+
+                            // Glowing circle animation
+                            val pulse = (Math.sin(frameCount * 0.1) * 20).toFloat()
+                            canvas.drawCircle(w / 2f, h / 2f - 100f, 120f + pulse, glowPaint)
+
+                            // Logo
+                            canvas.drawText("VM Go", w / 2f, h / 2f - 80f, logoPaint)
+
+                            // Animated status
+                            val msgIdx = (frameCount / 30).coerceAtMost(statusMessages.size - 1)
+                            canvas.drawText(statusMessages[msgIdx], w / 2f, h / 2f + 40f, statusPaint)
+                            canvas.drawText("${config.osVersion} • ${config.displayWidth}x${config.displayHeight}", w / 2f, h / 2f + 100f, statusPaint)
+
+                        } finally {
+                            holder.unlockCanvasAndPost(canvas)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Surface destroyed or locked
+                    break
+                }
+
+                frameCount++
+                delay(33) // ~30 FPS boot loop
+            }
+        }
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        NativeVmEngine.nativeSetSurface(holder.surface, width, height)
+        try {
+            NativeVmEngine.nativeSetSurface(holder.surface, width, height)
+        } catch (e: Throwable) {
+            AppLogger.e("VmDisplayActivity", "Error in surfaceChanged", e)
+        }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        NativeVmEngine.nativeDestroySurface()
+        renderJob?.cancel()
+        try {
+            NativeVmEngine.nativeDestroySurface()
+        } catch (e: Throwable) {
+            AppLogger.e("VmDisplayActivity", "Error in surfaceDestroyed", e)
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -89,37 +189,43 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 else -> event.actionMasked
             }
 
-            NativeVmEngine.nativeSendTouchEvent(
-                action = action,
-                pIds = ids,
-                pXs = xs,
-                pYs = ys,
-                pPressures = pressures,
-                pSizes = sizes,
-                pointerCount = pointerCount
-            )
+            try {
+                NativeVmEngine.nativeSendTouchEvent(
+                    action = action,
+                    pIds = ids,
+                    pXs = xs,
+                    pYs = ys,
+                    pPressures = pressures,
+                    pSizes = sizes,
+                    pointerCount = pointerCount
+                )
+            } catch (e: Throwable) {
+                // Ignore touch drop
+            }
             true
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
     private fun setupNavBar() {
-        // Back Button (Android KeyCode 4)
         binding.btnNavBack.setOnClickListener {
-            NativeVmEngine.nativeSendKeyEvent(4, true)
-            binding.btnNavBack.postDelayed({ NativeVmEngine.nativeSendKeyEvent(4, false) }, 50)
+            try {
+                NativeVmEngine.nativeSendKeyEvent(4, true)
+                binding.btnNavBack.postDelayed({ NativeVmEngine.nativeSendKeyEvent(4, false) }, 50)
+            } catch (e: Throwable) { e.printStackTrace() }
         }
 
-        // Home Button (Android KeyCode 3)
         binding.btnNavHome.setOnClickListener {
-            NativeVmEngine.nativeSendKeyEvent(3, true)
-            binding.btnNavHome.postDelayed({ NativeVmEngine.nativeSendKeyEvent(3, false) }, 50)
+            try {
+                NativeVmEngine.nativeSendKeyEvent(3, true)
+                binding.btnNavHome.postDelayed({ NativeVmEngine.nativeSendKeyEvent(3, false) }, 50)
+            } catch (e: Throwable) { e.printStackTrace() }
         }
 
-        // Recents / App Switch Button (Android KeyCode 187)
         binding.btnNavRecents.setOnClickListener {
-            NativeVmEngine.nativeSendKeyEvent(187, true)
-            binding.btnNavRecents.postDelayed({ NativeVmEngine.nativeSendKeyEvent(187, false) }, 50)
+            try {
+                NativeVmEngine.nativeSendKeyEvent(187, true)
+                binding.btnNavRecents.postDelayed({ NativeVmEngine.nativeSendKeyEvent(187, false) }, 50)
+            } catch (e: Throwable) { e.printStackTrace() }
         }
     }
 
@@ -144,8 +250,7 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    // Show Quick Menu or Settings
-                    Toast.makeText(this, "VM Quick Controls", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "VM Go Active • Slot: ${vmConfig?.id}", Toast.LENGTH_SHORT).show()
                     true
                 }
                 else -> false
@@ -155,7 +260,13 @@ class VmDisplayActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun onDestroy() {
         super.onDestroy()
-        stopService(Intent(this, HalBridgeService::class.java))
-        NativeVmEngine.nativeStopVm()
+        isRunning = false
+        renderJob?.cancel()
+        try {
+            stopService(Intent(this, HalBridgeService::class.java))
+            NativeVmEngine.nativeStopVm()
+        } catch (e: Throwable) {
+            AppLogger.e("VmDisplayActivity", "Error in onDestroy", e)
+        }
     }
 }

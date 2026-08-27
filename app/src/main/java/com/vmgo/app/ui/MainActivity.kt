@@ -12,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -20,9 +21,11 @@ import com.vmgo.app.core.NativeVmEngine
 import com.vmgo.app.databinding.ActivityMainBinding
 import com.vmgo.app.databinding.ItemVmSlotBinding
 import com.vmgo.app.model.VmInstance
+import com.vmgo.app.model.VmStatus
 import com.vmgo.app.service.GsiImportService
 import com.vmgo.app.util.AppLogger
 import com.vmgo.app.util.StorageUtil
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,6 +35,7 @@ class MainActivity : AppCompatActivity() {
 
     private var gsiImportService: GsiImportService? = null
     private var isServiceBound = false
+    private var selectedTargetSlotId: String = "slot_1"
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -57,7 +61,6 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Show engine version
         try {
             binding.tvEngineVersion.text = NativeVmEngine.nativeGetEngineVersion()
         } catch (e: Throwable) {
@@ -72,10 +75,15 @@ class MainActivity : AppCompatActivity() {
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
+    override fun onResume() {
+        super.onResume()
+        loadSlots()
+    }
+
     private fun setupRecyclerView() {
         adapter = VmSlotAdapter(
             items = vmSlots,
-            onStartClick = { instance -> startVm(instance) },
+            onStartClick = { instance -> handleStartClick(instance) },
             onConfigClick = { instance -> openConfig(instance) }
         )
         binding.rvSlots.layoutManager = LinearLayoutManager(this)
@@ -84,6 +92,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         binding.btnSelectGsi.setOnClickListener {
+            selectedTargetSlotId = vmSlots.firstOrNull()?.config?.id ?: "slot_1"
             pickGsiLauncher.launch("*/*")
         }
 
@@ -101,26 +110,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isRomInstalled(instance: VmInstance): Boolean {
+        val rawFile = File(instance.config.systemPath, "system.raw.img")
+        return rawFile.exists() && rawFile.length() > 0
+    }
+
     private fun loadSlots() {
         vmSlots.clear()
         val baseDir = StorageUtil.getSlotsBaseDir(this)
-        val slots = baseDir.listFiles()?.filter { it.isDirectory && it.name.startsWith("slot_") }
+        val slots = baseDir.listFiles()?.filter { it.isDirectory && it.name.startsWith("slot_") }?.sortedBy { it.name }
 
         if (!slots.isNullOrEmpty()) {
             for (slot in slots) {
                 val config = StorageUtil.prepareSlotDirectories(this, slot.name)
-                vmSlots.add(VmInstance(config))
+                val instance = VmInstance(config)
+                instance.status = if (isRomInstalled(instance)) VmStatus.STOPPED else VmStatus.ERROR
+                vmSlots.add(instance)
             }
         } else {
-            // Default initial slot 1
             val defaultSlot = StorageUtil.prepareSlotDirectories(this, "slot_1")
-            vmSlots.add(VmInstance(defaultSlot))
+            val instance = VmInstance(defaultSlot)
+            instance.status = if (isRomInstalled(instance)) VmStatus.STOPPED else VmStatus.ERROR
+            vmSlots.add(instance)
         }
         adapter.notifyDataSetChanged()
     }
 
     private fun handleGsiSelected(uri: Uri) {
-        val targetSlot = vmSlots.firstOrNull() ?: return
+        val targetSlot = vmSlots.find { it.config.id == selectedTargetSlotId } ?: vmSlots.firstOrNull() ?: return
         binding.progressBarImport.visibility = View.VISIBLE
         binding.tvImportStatus.visibility = View.VISIBLE
         binding.btnSelectGsi.isEnabled = false
@@ -142,7 +159,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (success && updatedConfig != null) {
                     AppLogger.i("MainActivity", "GSI Imported successfully to slot ${targetSlot.config.id}")
-                    Toast.makeText(this, "GSI Imported successfully to Slot 1!", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "GSI ROM Imported successfully to ${targetSlot.config.name}!", Toast.LENGTH_LONG).show()
                     loadSlots()
                 } else {
                     AppLogger.e("MainActivity", "Failed to import GSI image")
@@ -152,7 +169,20 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun startVm(instance: VmInstance) {
+    private fun handleStartClick(instance: VmInstance) {
+        if (!isRomInstalled(instance)) {
+            AlertDialog.Builder(this)
+                .setTitle("GSI ROM Belum Terpasang")
+                .setMessage("Slot ini belum memiliki image GSI ROM. Silakan pilih file GSI ROM (.img / .xz / .zip) terlebih dahulu.")
+                .setPositiveButton("Choose GSI") { _, _ ->
+                    selectedTargetSlotId = instance.config.id
+                    pickGsiLauncher.launch("*/*")
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
+
         AppLogger.i("MainActivity", "Launching VM Display Activity for ${instance.config.id}")
         val intent = Intent(this, VmDisplayActivity::class.java).apply {
             putExtra("VM_CONFIG", instance.config)
@@ -189,9 +219,20 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
+            val installed = isRomInstalled(item)
+
             holder.binding.tvVmName.text = item.config.name
             holder.binding.tvVmDetails.text = "${item.config.osVersion} • ${item.config.displayWidth}x${item.config.displayHeight} • ${item.config.targetFps} FPS"
-            holder.binding.tvVmStatus.text = item.status.name
+
+            if (installed) {
+                holder.binding.tvVmStatus.text = "Ready (ROM Installed)"
+                holder.binding.tvVmStatus.setTextColor(getColor(R.color.accent_cyan))
+                holder.binding.btnStartStop.text = getString(R.string.start_vm)
+            } else {
+                holder.binding.tvVmStatus.text = "No ROM (Import GSI)"
+                holder.binding.tvVmStatus.setTextColor(getColor(R.color.accent_amber))
+                holder.binding.btnStartStop.text = "Import GSI"
+            }
 
             holder.binding.btnStartStop.setOnClickListener { onStartClick(item) }
             holder.binding.btnConfig.setOnClickListener { onConfigClick(item) }

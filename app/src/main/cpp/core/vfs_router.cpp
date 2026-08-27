@@ -45,9 +45,6 @@ void VfsRouter::initialize(const VmConfiguration& config) {
     virtualDevTable_["/dev/input/event1"] = sockBase + "/input_event1.sock";
     virtualDevTable_["/dev/ashmem"] = sockBase + "/ashmem.sock";
 
-    // Priority 6: RootFS fallback
-    mountTable_.emplace_back("/", config.rootFsPath);
-
     initialized_ = true;
     LOGI("VFS Router initialized with rootFs: %s", config.rootFsPath.c_str());
 }
@@ -68,64 +65,77 @@ std::string VfsRouter::getVirtualDevSocket(const std::string& guestPath) const {
 
 void VfsRouter::addMountRule(const std::string& guestPrefix, const std::string& hostTarget) {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Insert at beginning for higher priority
     mountTable_.insert(mountTable_.begin(), {guestPrefix, hostTarget});
 }
 
 std::string VfsRouter::resolvePath(const std::string& guestPath, int /* flags */) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!initialized_) {
+    if (!initialized_ || guestPath.empty()) {
         return guestPath;
     }
 
     // Clean double slashes
     std::string clean = cleanPath(guestPath);
 
-    // Check virtual dev table
+    // 1. If it's already a host internal sandbox path, do not remap!
+    if (!config_.rootFsPath.empty() && clean.find("/com.vmgo.app/") != std::string::npos) {
+        return clean;
+    }
+
+    // 2. Check virtual device node sockets
     auto devIt = virtualDevTable_.find(clean);
     if (devIt != virtualDevTable_.end()) {
         return devIt->second;
     }
 
-    // Resolve mount table
+    // 3. Passthrough system proc, sys, dev nodes if not virtualized
+    if (clean.rfind("/proc/", 0) == 0 || clean.rfind("/sys/", 0) == 0 || clean == "/dev/null" || clean == "/dev/zero" || clean == "/dev/urandom") {
+        return clean;
+    }
+
+    // 4. Resolve against mount table for /system, /vendor, /apex, /data
     for (const auto& entry : mountTable_) {
         const std::string& prefix = entry.first;
         const std::string& hostBase = entry.second;
-
-        if (prefix == "/") {
-            // Fallback root
-            return hostBase + clean;
-        }
 
         if (clean == prefix) {
             return hostBase;
         }
 
         if (clean.rfind(prefix + "/", 0) == 0) {
-            std::string sub = clean.substr(prefix.length());
-            return hostBase + sub;
+            std::string subPath = clean.substr(prefix.length());
+            return hostBase + subPath;
         }
     }
 
-    return config_.rootFsPath + clean;
+    // 5. Fallback: If not matched in guest mounts, return host path as-is
+    return clean;
 }
 
-std::string VfsRouter::cleanPath(const std::string& path) {
-    if (path.empty()) return "/";
-    std::string res;
+std::string VfsRouter::cleanPath(const std::string& path) const {
+    if (path.empty()) return "";
+
+    std::string result;
+    result.reserve(path.size());
+
     bool lastWasSlash = false;
     for (char c : path) {
         if (c == '/') {
             if (!lastWasSlash) {
-                res += c;
+                result.push_back(c);
                 lastWasSlash = true;
             }
         } else {
-            res += c;
+            result.push_back(c);
             lastWasSlash = false;
         }
     }
-    return res;
+
+    if (result.size() > 1 && result.back() == '/') {
+        result.pop_back();
+    }
+
+    return result;
 }
 
 void VfsRouter::reset() {

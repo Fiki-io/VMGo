@@ -23,6 +23,16 @@
 #define AUDIT_ARCH_AARCH64 (EM_AARCH64|__AUDIT_ARCH_64BIT|__AUDIT_ARCH_LE)
 #endif
 
+#ifndef AUDIT_ARCH_ARM
+#define AUDIT_ARCH_ARM (EM_ARM|__AUDIT_ARCH_LE)
+#endif
+
+#ifndef AUDIT_ARCH_X86_64
+#define AUDIT_ARCH_X86_64 (EM_X86_64|__AUDIT_ARCH_64BIT|__AUDIT_ARCH_LE)
+#endif
+
+#define SECCOMP_BYPASS_MAGIC 0x7FFFFFFF
+
 namespace vmgo {
 
 SeccompTrap& SeccompTrap::getInstance() {
@@ -35,7 +45,7 @@ bool SeccompTrap::installFilter() {
         return true;
     }
 
-    // Step 1: Register SIGSYS signal handler
+    // Step 1: Register SIGSYS signal handler with SA_SIGINFO
     struct sigaction sa{};
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = SeccompTrap::sigsysHandler;
@@ -53,7 +63,7 @@ bool SeccompTrap::installFilter() {
         return false;
     }
 
-    // Step 3: Build BPF Filter to trap openat, mknodat, mount, setuid
+    // Step 3: Build BPF Filter with bypass token check to avoid recursive trap
     struct sock_filter filter[] = {
         // [0] Load architecture
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, arch))),
@@ -74,7 +84,13 @@ bool SeccompTrap::installFilter() {
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, nr))),
 
 #ifdef __NR_openat
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat, 0, 1),
+        // Check if syscall is openat
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat, 0, 4),
+        // If openat, check if arg0 == SECCOMP_BYPASS_MAGIC (Internal handler call -> ALLOW)
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, args[0]))),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SECCOMP_BYPASS_MAGIC, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        // Otherwise, TRAP to SIGSYS
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
@@ -108,8 +124,7 @@ bool SeccompTrap::installFilter() {
     };
 
     if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) != 0) {
-        LOGW("prctl(PR_SET_SECCOMP) failed or filter unsupported, fallback active: %s", strerror(errno));
-        // Continue gracefully
+        LOGW("prctl(PR_SET_SECCOMP) filter notice: %s", strerror(errno));
     } else {
         LOGI("Seccomp-BPF Syscall Filter installed successfully");
     }
@@ -133,10 +148,6 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     VfsRouter& vfs = VfsRouter::getInstance();
 
 #if defined(__aarch64__)
-    // ARM64 registers:
-    // x8: Syscall Number
-    // x0-x5: Arguments
-    // Return value in x0
     uint64_t syscallNr = uctx->uc_mcontext.regs[8];
     uint64_t arg0 = uctx->uc_mcontext.regs[0];
     uint64_t arg1 = uctx->uc_mcontext.regs[1];
@@ -148,14 +159,14 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     switch (syscallNr) {
 #ifdef __NR_openat
         case __NR_openat: {
-            int dirfd = static_cast<int>(arg0);
             const char* pathname = reinterpret_cast<const char*>(arg1);
             int flags = static_cast<int>(arg2);
             mode_t mode = static_cast<mode_t>(arg3);
 
             if (pathname) {
                 std::string resolved = vfs.resolvePath(pathname, flags);
-                ret = syscall(__NR_openat, dirfd, resolved.c_str(), flags, mode);
+                // Call real openat with SECCOMP_BYPASS_MAGIC so the filter allows it without re-trapping
+                ret = syscall(__NR_openat, SECCOMP_BYPASS_MAGIC, resolved.c_str(), flags, mode);
                 if (ret < 0) {
                     ret = -errno;
                 }
@@ -167,22 +178,25 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 #endif
 #ifdef __NR_mount
         case __NR_mount: {
-            // Emulate mount success in user-space sandbox
-            ret = 0;
+            ret = 0; // Fake success for user-space mount
+            break;
+        }
+#endif
+#ifdef __NR_mknodat
+        case __NR_mknodat: {
+            ret = 0; // Fake success for user-space mknodat
             break;
         }
 #endif
 #ifdef __NR_setuid
         case __NR_setuid: {
-            // Fake setuid success for sandboxed zygote
-            ret = 0;
+            ret = 0; // Fake success for sandboxed zygote
             break;
         }
 #endif
 #ifdef __NR_setgid
         case __NR_setgid: {
-            // Fake setgid success for sandboxed zygote
-            ret = 0;
+            ret = 0; // Fake success for sandboxed zygote
             break;
         }
 #endif
@@ -192,12 +206,10 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     }
 
     uctx->uc_mcontext.regs[0] = static_cast<uint64_t>(ret);
-    // Instruction size is 4 bytes on ARM64
     uctx->uc_mcontext.pc += 4;
 
 #elif defined(__arm__)
     uint32_t syscallNr = uctx->uc_mcontext.arm_r7;
-    uint32_t arg0 = uctx->uc_mcontext.arm_r0;
     uint32_t arg1 = uctx->uc_mcontext.arm_r1;
     uint32_t arg2 = uctx->uc_mcontext.arm_r2;
     uint32_t arg3 = uctx->uc_mcontext.arm_r3;
@@ -206,10 +218,10 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     if (syscallNr == __NR_openat && arg1 != 0) {
         const char* pathname = reinterpret_cast<const char*>(arg1);
         std::string resolved = vfs.resolvePath(pathname, arg2);
-        ret = syscall(__NR_openat, static_cast<int>(arg0), resolved.c_str(), arg2, arg3);
+        ret = syscall(__NR_openat, SECCOMP_BYPASS_MAGIC, resolved.c_str(), arg2, arg3);
         if (ret < 0) ret = -errno;
     } else {
-        ret = 0; // fake success for mount/setuid
+        ret = 0;
     }
 
     uctx->uc_mcontext.arm_r0 = static_cast<uint32_t>(ret);

@@ -174,21 +174,37 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
     }
 
     std::string rootfs = config.rootFsPath;
+    std::string systemPath = config.systemPath;
 
-    // Check if init or app_process64 exists
+    // List of candidate boot binaries in priority order
+    std::vector<std::string> candidates = {
+        rootfs + "/init",
+        rootfs + "/system/bin/app_process64",
+        rootfs + "/system/bin/app_process",
+        systemPath + "/bin/app_process64",
+        systemPath + "/bin/app_process",
+        rootfs + "/system/bin/sh",
+        rootfs + "/bin/sh",
+        systemPath + "/bin/sh"
+    };
+
     std::string initBin;
-    if (access((rootfs + "/init").c_str(), X_OK) == 0) {
-        initBin = rootfs + "/init";
-    } else if (access((rootfs + "/system/bin/app_process64").c_str(), X_OK) == 0) {
-        initBin = rootfs + "/system/bin/app_process64";
-    } else if (access((rootfs + "/system/bin/app_process").c_str(), X_OK) == 0) {
-        initBin = rootfs + "/system/bin/app_process";
-    } else {
-        LOGE("Guest bootstrap: No executable init or app_process found in %s", rootfs.c_str());
-        LOGE("Guest bootstrap: Checked: %s/init, %s/system/bin/app_process64", rootfs.c_str(), rootfs.c_str());
+    for (const auto& candidate : candidates) {
+        if (access(candidate.c_str(), F_OK) == 0) {
+            chmod(candidate.c_str(), 0755);
+            if (access(candidate.c_str(), X_OK) == 0) {
+                initBin = candidate;
+                break;
+            }
+        }
+    }
+
+    if (initBin.empty()) {
+        LOGE("Guest bootstrap: No executable init or app_process found in %s or %s",
+             rootfs.c_str(), systemPath.c_str());
         
-        // List what IS in the rootfs for debugging
-        LOGI("Guest bootstrap: Listing rootfs contents:");
+        // List what IS in rootfs and systemPath for debugging
+        LOGI("Guest bootstrap: Listing rootfs (%s):", rootfs.c_str());
         DIR* dir = opendir(rootfs.c_str());
         if (dir) {
             struct dirent* entry;
@@ -198,16 +214,28 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
             }
             closedir(dir);
         }
+
+        LOGI("Guest bootstrap: Listing systemPath (%s):", systemPath.c_str());
+        DIR* sDir = opendir(systemPath.c_str());
+        if (sDir) {
+            struct dirent* entry;
+            while ((entry = readdir(sDir)) != nullptr) {
+                LOGI("  system/%s (%s)", entry->d_name,
+                     entry->d_type == DT_DIR ? "dir" : "file");
+            }
+            closedir(sDir);
+        }
         return false;
     }
 
     LOGI("Guest bootstrap: Using init binary: %s", initBin.c_str());
 
-    // Ensure init is executable
+    // Ensure all companion binaries and linkers are executable
     chmod(initBin.c_str(), 0755);
-    if (access((rootfs + "/system/bin/app_process64").c_str(), F_OK) == 0) {
-        chmod((rootfs + "/system/bin/app_process64").c_str(), 0755);
-    }
+    chmod((rootfs + "/system/bin/linker64").c_str(), 0755);
+    chmod((rootfs + "/system/bin/linker").c_str(), 0755);
+    chmod((systemPath + "/bin/linker64").c_str(), 0755);
+    chmod((systemPath + "/bin/linker").c_str(), 0755);
     if (access((rootfs + "/system/bin/linker64").c_str(), F_OK) == 0) {
         chmod((rootfs + "/system/bin/linker64").c_str(), 0755);
     }

@@ -111,8 +111,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isRomInstalled(instance: VmInstance): Boolean {
-        val rawFile = File(instance.config.systemPath, "system.raw.img")
-        return rawFile.exists() && rawFile.length() > 0
+        val rootFs = File(instance.config.rootFsPath)
+        val systemDir = File(instance.config.systemPath)
+
+        val hasRawImg = File(rootFs, "system.raw.img").let { it.exists() && it.length() > 0 } ||
+                        File(systemDir, "system.raw.img").let { it.exists() && it.length() > 0 }
+
+        val hasExtractedSystem = File(rootFs, "init").exists() ||
+                                File(rootFs, "system/bin/app_process64").exists() ||
+                                File(rootFs, "system/bin/linker64").exists() ||
+                                File(rootFs, "system/build.prop").exists() ||
+                                File(rootFs, "build.prop").exists() ||
+                                File(rootFs, "bin/sh").exists() ||
+                                File(systemDir, "bin/app_process64").exists() ||
+                                File(systemDir, "build.prop").exists() ||
+                                (rootFs.listFiles()?.isNotEmpty() == true)
+
+        return hasRawImg || hasExtractedSystem
     }
 
     private fun loadSlots() {

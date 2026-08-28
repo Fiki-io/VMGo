@@ -378,27 +378,6 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
             ret = UserKernel::getInstance().sysMknodat(dirFd, pathname, mode, dev);
             break;
         }
-#endif
-#ifdef __NR_mknodat
-        case __NR_mknodat: {
-            // Guest tries to create device nodes
-            // Create a regular file instead (our seccomp handles ioctl on these)
-            const char* pathname = reinterpret_cast<const char*>(arg1);
-            if (pathname) {
-                std::string resolved = vfs.resolvePath(pathname, 0);
-                int fd = open(resolved.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                if (fd >= 0) {
-                    close(fd);
-                    ret = 0;
-                } else {
-                    ret = 0; // Still fake success
-                }
-            } else {
-                ret = 0;
-            }
-            break;
-        }
-#endif
 #ifdef __NR_mknod
         case __NR_mknod: {
             ret = 0;

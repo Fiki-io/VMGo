@@ -46,3 +46,20 @@ target_link_libraries(
     ${egl-lib}
     ${gles2-lib}
 )
+
+# Standalone Executable Loader (placed in nativeLibraryDir with valid exec permissions)
+add_executable(
+    vmgo_loader
+    core/loader_main.cpp
+    core/seccomp_trap.cpp
+    core/vfs_router.cpp
+    core/virtual_binder.cpp
+    core/user_kernel.cpp
+    core/crash_handler.cpp
+)
+set_target_properties(vmgo_loader PROPERTIES OUTPUT_NAME "libvmgo_loader.so")
+target_link_libraries(
+    vmgo_loader
+    ${log-lib}
+)
+

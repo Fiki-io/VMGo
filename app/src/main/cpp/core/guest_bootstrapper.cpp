@@ -328,7 +328,37 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
 
         LOGI("Guest bootstrap: Launching %s (%zu args)...", initBin.c_str(), argv.size() - 1);
 
-        // 1. Launch via User-Space ELF Loader (In-Memory execution bypassing Android 10+ SELinux execve restrictions)
+        // 1. Launch via Standalone Native Executable Loader (VPhoneGaGa / Twoyi architecture)
+        std::vector<std::string> loaderCandidates = {
+            config.nativeLibDir + "/libvmgo_loader.so",
+            "/data/data/com.vmgo.app/lib/libvmgo_loader.so",
+            "/data/user/0/com.vmgo.app/lib/libvmgo_loader.so"
+        };
+
+        std::string foundLoader;
+        for (const auto& lPath : loaderCandidates) {
+            if (!lPath.empty() && access(lPath.c_str(), X_OK) == 0) {
+                foundLoader = lPath;
+                break;
+            }
+        }
+
+        if (!foundLoader.empty()) {
+            LOGI("Guest bootstrap: Executing via native loader: %s", foundLoader.c_str());
+            std::vector<const char*> loaderArgv;
+            loaderArgv.push_back(foundLoader.c_str());
+            loaderArgv.push_back(rootfs.c_str());
+            loaderArgv.push_back(initBin.c_str());
+            for (size_t i = 1; i < argv.size() - 1; ++i) {
+                loaderArgv.push_back(argv[i]);
+            }
+            loaderArgv.push_back(nullptr);
+
+            execve(foundLoader.c_str(), const_cast<char* const*>(loaderArgv.data()), environ);
+            LOGW("Guest bootstrap: Loader execve failed (%s), falling back...", strerror(errno));
+        }
+
+        // 2. Launch via User-Space ELF Loader (In-Memory execution fallback)
         std::vector<std::string> argsList;
         for (size_t i = 0; i < argv.size() - 1; ++i) {
             if (argv[i]) argsList.emplace_back(argv[i]);
@@ -341,12 +371,12 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
 
         bool loaderStarted = ElfLoader::execute(initBin, argsList, envList, rootfs);
         if (!loaderStarted) {
-            // 2. Fallback to standard execve
+            // 3. Fallback to standard execve
             LOGW("Guest bootstrap: ElfLoader failed to start, attempting execve fallback...");
             execve(initBin.c_str(), const_cast<char* const*>(argv.data()), environ);
         }
 
-        // If we reach here, both ElfLoader and execve failed
+        // If we reach here, all launch methods failed
         fprintf(stderr, "Guest: Launch FAILED for %s: %s (errno=%d)\n",
                 initBin.c_str(), strerror(errno), errno);
         _exit(127);

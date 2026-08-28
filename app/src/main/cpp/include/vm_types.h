@@ -132,6 +132,7 @@ struct VmConfiguration {
     std::string dataPath;
     std::string apexPath;
     std::string socketDir;
+    std::string nativeLibDir;
 
     int displayWidth;
     int displayHeight;

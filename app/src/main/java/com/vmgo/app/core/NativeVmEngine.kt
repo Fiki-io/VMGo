@@ -46,6 +46,7 @@ object NativeVmEngine {
         dataPath: String,
         apexPath: String,
         socketDir: String,
+        nativeLibDir: String,
         width: Int,
         height: Int,
         dpi: Int,
@@ -93,6 +94,12 @@ object NativeVmEngine {
 
         syncLogFilePath()
 
+        val libDir = try {
+            VmGoApp.instance.applicationInfo.nativeLibraryDir
+        } catch (e: Throwable) {
+            "/data/data/com.vmgo.app/lib"
+        }
+
         AppLogger.i("NativeVmEngine", "Calling nativeInit for slot ${config.id} (${config.displayWidth}x${config.displayHeight})")
         val success = nativeInit(
             slotId = config.id,
@@ -102,6 +109,7 @@ object NativeVmEngine {
             dataPath = config.dataPath,
             apexPath = config.apexPath,
             socketDir = config.socketDir,
+            nativeLibDir = libDir,
             width = config.displayWidth,
             height = config.displayHeight,
             dpi = config.displayDpi,

@@ -7,8 +7,14 @@ import com.vmgo.app.util.AppLogger
 
 class VmGoApp : Application() {
 
+    companion object {
+        lateinit var instance: VmGoApp
+            private set
+    }
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
 
         // 1. Initialize persistent logger
         AppLogger.init(this)

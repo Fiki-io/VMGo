@@ -49,6 +49,7 @@ Java_com_vmgo_app_core_NativeVmEngine_nativeInit(
     jstring jDataPath,
     jstring jApexPath,
     jstring jSocketDir,
+    jstring jNativeLibDir,
     jint width,
     jint height,
     jint dpi,
@@ -64,6 +65,7 @@ Java_com_vmgo_app_core_NativeVmEngine_nativeInit(
     config.dataPath = jstringToString(env, jDataPath);
     config.apexPath = jstringToString(env, jApexPath);
     config.socketDir = jstringToString(env, jSocketDir);
+    config.nativeLibDir = jstringToString(env, jNativeLibDir);
 
     config.displayWidth = width;
     config.displayHeight = height;

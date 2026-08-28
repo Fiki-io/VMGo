@@ -75,10 +75,7 @@ Java_com_vmgo_app_core_NativeVmEngine_nativeInit(
     // 1. Initialize VFS Path Router
     VfsRouter::getInstance().initialize(config);
 
-    // 2. Install Seccomp-BPF Trap
-    SeccompTrap::getInstance().installFilter();
-
-    // 3. Initialize Input Dispatcher
+    // 2. Initialize Input Dispatcher
     std::string inputSock = config.socketDir + "/input_event0.sock";
     InputDispatcher::getInstance().initialize(inputSock);
 

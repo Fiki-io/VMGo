@@ -378,6 +378,7 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
             ret = UserKernel::getInstance().sysMknodat(dirFd, pathname, mode, dev);
             break;
         }
+#endif
 #ifdef __NR_mknod
         case __NR_mknod: {
             ret = 0;

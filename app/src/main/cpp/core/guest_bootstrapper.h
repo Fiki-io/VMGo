@@ -25,6 +25,7 @@ private:
 
     void setupEnvironment(const VmConfiguration& config);
     void createVirtualDevNodes(const std::string& rootfs);
+    void setupTimezoneData(const std::string& rootfs);
     void startLogReader(int pipeFd);
 
     pid_t guestPid_ = -1;

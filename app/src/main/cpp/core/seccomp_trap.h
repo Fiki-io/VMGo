@@ -11,10 +11,12 @@ class SeccompTrap {
 public:
     static SeccompTrap& getInstance();
 
-    bool installFilter();
+    bool installFilter(int rootfsDfd = -1);
     void uninstall();
 
     static void sigsysHandler(int sig, siginfo_t* info, void* context);
+
+    int rootfsDfd_ = -1;
 
 private:
     SeccompTrap() = default;

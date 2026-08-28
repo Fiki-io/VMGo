@@ -105,7 +105,54 @@ void GuestBootstrapper::createVirtualDevNodes(const std::string& rootfs) {
         buildProp = rootfs + "/build.prop";
     }
 
+    // Deploy timezone data fallback
+    setupTimezoneData(rootfs);
+
     LOGI("Guest bootstrap: Virtual dev nodes created in %s", rootfs.c_str());
+}
+
+void GuestBootstrapper::setupTimezoneData(const std::string& rootfs) {
+    std::string apexTzDir = rootfs + "/apex/com.android.tzdata/etc/tz";
+    std::string sysTzDir = rootfs + "/system/usr/share/zoneinfo";
+    std::string sysEtcTz = rootfs + "/system/etc/tz";
+    std::string runtimeTzDir = rootfs + "/apex/com.android.runtime/etc/tz";
+
+    mkdirRecursive(apexTzDir);
+    mkdirRecursive(sysTzDir);
+    mkdirRecursive(sysEtcTz);
+    mkdirRecursive(runtimeTzDir);
+
+    // List of tz files needed by bionic
+    std::vector<std::string> tzFiles = { "tzdata", "tzlookup.xml", "tz_version", "telephonylookup.xml" };
+
+    // Host locations where tz files might exist
+    std::vector<std::string> hostSearchDirs = {
+        "/apex/com.android.tzdata/etc/tz",
+        "/apex/com.android.runtime/etc/tz",
+        "/system/usr/share/zoneinfo",
+        "/system/etc/tz"
+    };
+
+    for (const auto& fname : tzFiles) {
+        for (const auto& hDir : hostSearchDirs) {
+            std::string hFile = hDir + "/" + fname;
+            if (access(hFile.c_str(), R_OK) == 0) {
+                // Ensure symlinks exist in all candidate guest directories
+                std::vector<std::string> targets = {
+                    apexTzDir + "/" + fname,
+                    sysTzDir + "/" + fname,
+                    sysEtcTz + "/" + fname,
+                    runtimeTzDir + "/" + fname
+                };
+                for (const auto& tgt : targets) {
+                    if (access(tgt.c_str(), F_OK) != 0) {
+                        symlink(hFile.c_str(), tgt.c_str());
+                    }
+                }
+                break;
+            }
+        }
+    }
 }
 
 void GuestBootstrapper::setupEnvironment(const VmConfiguration& config) {
@@ -279,9 +326,12 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
             fprintf(stderr, "Guest: chdir to %s failed: %s\n", rootfs.c_str(), strerror(errno));
         }
 
+        // Open rootfs directory descriptor for clean BPF bypass and sandbox scoping
+        int rootfsDfd = open(rootfs.c_str(), O_RDONLY | O_DIRECTORY);
+
         // Install Seccomp-BPF filter on THIS child process
         // All syscalls from this process will be intercepted by our trap handler
-        SeccompTrap::getInstance().installFilter();
+        SeccompTrap::getInstance().installFilter(rootfsDfd);
 
         // Build argv based on what binary we found
         std::vector<const char*> argv;

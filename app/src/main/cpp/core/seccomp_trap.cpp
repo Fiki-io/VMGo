@@ -40,10 +40,11 @@ SeccompTrap& SeccompTrap::getInstance() {
     return instance;
 }
 
-bool SeccompTrap::installFilter() {
+bool SeccompTrap::installFilter(int rootfsDfd) {
     if (installed_) {
         return true;
     }
+    rootfsDfd_ = rootfsDfd;
 
     // Step 1: Register SIGSYS signal handler with SA_SIGINFO
     struct sigaction sa{};
@@ -62,6 +63,8 @@ bool SeccompTrap::installFilter() {
         LOGE("prctl(PR_SET_NO_NEW_PRIVS) failed: %s", strerror(errno));
         return false;
     }
+
+    uint32_t bypassDfd = (rootfsDfd_ >= 0) ? static_cast<uint32_t>(rootfsDfd_) : SECCOMP_BYPASS_MAGIC;
 
     // Step 3: Build BPF Filter with bypass token check to avoid recursive trap
     struct sock_filter filter[] = {
@@ -86,11 +89,27 @@ bool SeccompTrap::installFilter() {
 #ifdef __NR_openat
         // Check if syscall is openat
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat, 0, 4),
-        // If openat, check if arg0 == SECCOMP_BYPASS_MAGIC (Internal handler call -> ALLOW)
+        // If openat, check if arg0 == bypassDfd (Internal handler call -> ALLOW)
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, args[0]))),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SECCOMP_BYPASS_MAGIC, 0, 1),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, bypassDfd, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         // Otherwise, TRAP to SIGSYS
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_faccessat
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_faccessat, 0, 4),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, args[0]))),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, bypassDfd, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_newfstatat
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_newfstatat, 0, 4),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, args[0]))),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, bypassDfd, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
@@ -230,7 +249,7 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     uint64_t arg3 = uctx->uc_mcontext.regs[3];
     (void)arg0;
 
-    int64_t ret = 0;
+    int dfd = (SeccompTrap::getInstance().rootfsDfd_ >= 0) ? SeccompTrap::getInstance().rootfsDfd_ : AT_FDCWD;
 
     switch (syscallNr) {
 #ifdef __NR_openat
@@ -241,7 +260,43 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 
             if (pathname) {
                 std::string resolved = vfs.resolvePath(pathname, flags);
-                ret = syscall(__NR_openat, SECCOMP_BYPASS_MAGIC, resolved.c_str(), flags, mode);
+                ret = syscall(__NR_openat, dfd, resolved.c_str(), flags, mode);
+                if (ret < 0) {
+                    ret = -errno;
+                }
+            } else {
+                ret = -EFAULT;
+            }
+            break;
+        }
+#endif
+#ifdef __NR_faccessat
+        case __NR_faccessat: {
+            const char* pathname = reinterpret_cast<const char*>(arg1);
+            int mode = static_cast<int>(arg2);
+            int flags = static_cast<int>(arg3);
+
+            if (pathname) {
+                std::string resolved = vfs.resolvePath(pathname, 0);
+                ret = syscall(__NR_faccessat, dfd, resolved.c_str(), mode, flags);
+                if (ret < 0) {
+                    ret = -errno;
+                }
+            } else {
+                ret = -EFAULT;
+            }
+            break;
+        }
+#endif
+#ifdef __NR_newfstatat
+        case __NR_newfstatat: {
+            const char* pathname = reinterpret_cast<const char*>(arg1);
+            void* statbuf = reinterpret_cast<void*>(arg2);
+            int flags = static_cast<int>(arg3);
+
+            if (pathname) {
+                std::string resolved = vfs.resolvePath(pathname, 0);
+                ret = syscall(__NR_newfstatat, dfd, resolved.c_str(), statbuf, flags);
                 if (ret < 0) {
                     ret = -errno;
                 }

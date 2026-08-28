@@ -26,7 +26,9 @@ static inline uintptr_t align_up(uintptr_t val, size_t alignment) {
 #if defined(__aarch64__)
 __attribute__((naked, noreturn)) static void jump_to_entry(uintptr_t entry, uintptr_t sp) {
     __asm__ volatile (
-        "mov sp, x1\n"
+        "mov x16, x0\n" // Save entry target in scratch register x16
+        "mov sp, x1\n"  // Switch to prepared stack
+        "mov x0, #0\n"  // Clear x0 (rtld_fini = NULL for bionic linker)
         "mov x1, #0\n"
         "mov x2, #0\n"
         "mov x3, #0\n"
@@ -42,7 +44,6 @@ __attribute__((naked, noreturn)) static void jump_to_entry(uintptr_t entry, uint
         "mov x13, #0\n"
         "mov x14, #0\n"
         "mov x15, #0\n"
-        "mov x16, #0\n"
         "mov x17, #0\n"
         "mov x18, #0\n"
         "mov x19, #0\n"
@@ -57,7 +58,7 @@ __attribute__((naked, noreturn)) static void jump_to_entry(uintptr_t entry, uint
         "mov x28, #0\n"
         "mov x29, #0\n"
         "mov x30, #0\n"
-        "br x0\n"
+        "br x16\n"      // Jump to entry!
     );
 }
 #elif defined(__arm__)

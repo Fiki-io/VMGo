@@ -25,6 +25,7 @@ add_library(
     core/virtual_binder.cpp
     core/user_kernel.cpp
     core/init_sequencer.cpp
+    core/crash_handler.cpp
     hal/qemu_pipe_server.cpp
     graphics/egl_renderer.cpp
     input/input_dispatcher.cpp

@@ -4,6 +4,7 @@
 #include "elf_loader.h"
 #include "user_kernel.h"
 #include "init_sequencer.h"
+#include "crash_handler.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -282,6 +283,9 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
 
         // Open rootfs directory descriptor for clean BPF bypass and sandbox scoping
         int rootfsDfd = open(rootfs.c_str(), O_RDONLY | O_DIRECTORY);
+
+        // Install diagnostic crash reporter
+        CrashHandler::install();
 
         // Install Seccomp-BPF filter on THIS child process
         // All syscalls from this process will be intercepted by our trap handler

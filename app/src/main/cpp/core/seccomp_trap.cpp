@@ -250,6 +250,7 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     (void)arg0;
 
     int dfd = (SeccompTrap::getInstance().rootfsDfd_ >= 0) ? SeccompTrap::getInstance().rootfsDfd_ : AT_FDCWD;
+    int64_t ret = 0;
 
     switch (syscallNr) {
 #ifdef __NR_openat

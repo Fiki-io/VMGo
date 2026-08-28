@@ -16,6 +16,16 @@
 
 namespace vmgo {
 
+static void mkdirRecursive(const std::string& path) {
+    std::string current;
+    for (size_t i = 0; i < path.size(); ++i) {
+        current += path[i];
+        if (path[i] == '/' || i == path.size() - 1) {
+            mkdir(current.c_str(), 0755);
+        }
+    }
+}
+
 GuestBootstrapper& GuestBootstrapper::getInstance() {
     static GuestBootstrapper instance;
     return instance;

@@ -12,6 +12,10 @@
 #include <linux/seccomp.h>
 #include <linux/audit.h>
 #include <cstddef>
+#include <elf.h>
+#include <vector>
+#include <string>
+#include "elf_loader.h"
 
 #ifndef PR_SET_NO_NEW_PRIVS
 #define PR_SET_NO_NEW_PRIVS 38
@@ -36,6 +40,52 @@
 #define SECCOMP_BYPASS_MAGIC 0x7FFFFFFF
 
 namespace vmgo {
+
+static std::string getInterpreterPath(const std::string& resolvedPath) {
+    int fd = open(resolvedPath.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return "";
+    
+    unsigned char buf[4096];
+    ssize_t n = read(fd, buf, sizeof(buf));
+    close(fd);
+    
+    if (n >= 4 && buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F') {
+        if (buf[EI_CLASS] == ELFCLASS64) {
+            if (n >= (ssize_t)sizeof(Elf64_Ehdr)) {
+                Elf64_Ehdr* ehdr = reinterpret_cast<Elf64_Ehdr*>(buf);
+                if (ehdr->e_phoff > 0 && ehdr->e_phnum > 0 && ehdr->e_phoff + ehdr->e_phnum * sizeof(Elf64_Phdr) <= (size_t)n) {
+                    Elf64_Phdr* phdr = reinterpret_cast<Elf64_Phdr*>(buf + ehdr->e_phoff);
+                    for (int i = 0; i < ehdr->e_phnum; ++i) {
+                        if (phdr[i].p_type == PT_INTERP) {
+                            return "/system/bin/linker64";
+                        }
+                    }
+                }
+            }
+        } else if (buf[EI_CLASS] == ELFCLASS32) {
+            if (n >= (ssize_t)sizeof(Elf32_Ehdr)) {
+                Elf32_Ehdr* ehdr = reinterpret_cast<Elf32_Ehdr*>(buf);
+                if (ehdr->e_phoff > 0 && ehdr->e_phnum > 0 && ehdr->e_phoff + ehdr->e_phnum * sizeof(Elf32_Phdr) <= (size_t)n) {
+                    Elf32_Phdr* phdr = reinterpret_cast<Elf32_Phdr*>(buf + ehdr->e_phoff);
+                    for (int i = 0; i < ehdr->e_phnum; ++i) {
+                        if (phdr[i].p_type == PT_INTERP) {
+                            return "/system/bin/linker";
+                        }
+                    }
+                }
+            }
+        }
+    } else if (n >= 2 && buf[0] == '#' && buf[1] == '!') {
+        std::string interp;
+        for (ssize_t i = 2; i < n && buf[i] != '\n'; ++i) {
+            if (buf[i] != ' ' || !interp.empty()) {
+                interp += buf[i];
+            }
+        }
+        return interp;
+    }
+    return "";
+}
 
 SeccompTrap& SeccompTrap::getInstance() {
     static SeccompTrap instance;
@@ -112,6 +162,19 @@ bool SeccompTrap::installFilter(int rootfsDfd) {
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, args[0]))),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, bypassDfd, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_execveat
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_execveat, 0, 4),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, args[0]))),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, bypassDfd, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
+#ifdef __NR_execve
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_execve, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
@@ -262,6 +325,7 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
     (void)arg0;
 
     int dfd = (SeccompTrap::getInstance().rootfsDfd_ >= 0) ? SeccompTrap::getInstance().rootfsDfd_ : AT_FDCWD;
+    int bypassDfd = (SeccompTrap::getInstance().rootfsDfd_ >= 0) ? SeccompTrap::getInstance().rootfsDfd_ : SECCOMP_BYPASS_MAGIC;
     int64_t ret = 0;
 
     switch (syscallNr) {
@@ -338,6 +402,64 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
                 ret = syscall(__NR_newfstatat, targetDfd, resolved.c_str(), statbuf, flags);
                 if (ret < 0) {
                     ret = -errno;
+                }
+            } else {
+                ret = -EFAULT;
+            }
+            break;
+        }
+#endif
+#ifdef __NR_execveat
+        case __NR_execveat:
+#endif
+#ifdef __NR_execve
+        case __NR_execve: {
+            const char* pathname;
+            char* const* guest_argv;
+            char* const* guest_envp;
+            
+            if (syscallNr == __NR_execve) {
+                pathname = reinterpret_cast<const char*>(arg0);
+                guest_argv = reinterpret_cast<char* const*>(arg1);
+                guest_envp = reinterpret_cast<char* const*>(arg2);
+            } else {
+                pathname = reinterpret_cast<const char*>(arg1);
+                guest_argv = reinterpret_cast<char* const*>(arg2);
+                guest_envp = reinterpret_cast<char* const*>(arg3);
+            }
+            
+            if (pathname) {
+                std::string resolvedPath = vfs.resolvePath(pathname, 0);
+                std::string interp = getInterpreterPath(resolvedPath);
+                
+                int argc = 0;
+                while (guest_argv && guest_argv[argc]) argc++;
+                
+                std::vector<std::string> new_argv;
+                for (int i = 0; i < argc; ++i) {
+                    new_argv.push_back(guest_argv[i]);
+                }
+
+                std::vector<std::string> envVars;
+                for (int i = 0; guest_envp && guest_envp[i]; ++i) {
+                    envVars.push_back(guest_envp[i]);
+                }
+                
+                std::string rootfs = "";
+                if (SeccompTrap::getInstance().rootfsDfd_ >= 0) {
+                    // We need the rootfs path. It's stored in VmConfiguration, but VfsRouter knows it.
+                    rootfs = "/data/user/0/com.vmgo.app/files/vm_slots/slot_1/rootfs"; // Fallback, vfs router should provide it but we'll use a hack or just pass empty if ElfLoader doesn't strictly need it to be absolute.
+                    // Wait, VfsRouter::getInstance().resolvePath("/") gives the rootfs!
+                    rootfs = vfs.resolvePath("/", 0);
+                }
+
+                LOGI("Guest Syscall: execve(%s) intercepted via ElfLoader", resolvedPath.c_str());
+                if (!ElfLoader::execute(rootfs, resolvedPath, interp, new_argv, envVars)) {
+                    ret = -ENOEXEC;
+                    LOGE("Guest Syscall: ElfLoader failed for %s", resolvedPath.c_str());
+                } else {
+                    // ElfLoader::execute will jump to entry and NEVER RETURN here!
+                    // If it does return false, we handled it above.
                 }
             } else {
                 ret = -EFAULT;

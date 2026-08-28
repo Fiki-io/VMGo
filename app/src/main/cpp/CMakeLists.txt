@@ -56,6 +56,8 @@ add_executable(
     core/virtual_binder.cpp
     core/user_kernel.cpp
     core/crash_handler.cpp
+    core/elf_loader.cpp
+    core/jump_to_entry.S
 )
 set_target_properties(vmgo_loader PROPERTIES OUTPUT_NAME "libvmgo_loader.so")
 target_link_libraries(

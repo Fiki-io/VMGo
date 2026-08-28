@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <vector>
 #include <string>
+#include "elf_loader.h"
 
 using namespace vmgo;
 
@@ -59,19 +60,34 @@ int main(int argc, char** argv) {
     LOGI("VMGo Loader: Seccomp & VFS active, launching target...");
 
     // 6. Build argv for target
-    std::vector<char*> targetArgv;
+    std::vector<std::string> targetArgv;
     for (int i = 2; i < argc; ++i) {
         targetArgv.push_back(argv[i]);
     }
-    targetArgv.push_back(nullptr);
 
-    // 7. Execute target binary
-    execve(targetBin.c_str(), targetArgv.data(), environ);
+    std::vector<std::string> envVars;
+    for (char** env = environ; env && *env; ++env) {
+        envVars.push_back(*env);
+    }
 
-    // Fallback: If direct execve failed, try relative path
-    std::string relPath = "." + targetBin.substr(rootfs.length());
-    execve(relPath.c_str(), targetArgv.data(), environ);
+    // 7. Execute target binary via ElfLoader (avoids kernel execve wiping seccomp!)
+    std::string interp = "/system/bin/linker64"; // Default for app_process64
+    
+    // Quick parser for interpreter
+    int fd = open(targetBin.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        unsigned char buf[4096];
+        ssize_t n = read(fd, buf, sizeof(buf));
+        close(fd);
+        if (n >= 4 && buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F') {
+            if (buf[4] == 1) interp = "/system/bin/linker"; // 32-bit
+        }
+    }
 
-    LOGE("VMGo Loader: Failed to execve %s: %s", targetBin.c_str(), strerror(errno));
-    return 127;
+    if (!ElfLoader::execute(rootfs, targetBin, interp, targetArgv, envVars)) {
+        LOGE("VMGo Loader: ElfLoader failed for %s", targetBin.c_str());
+        return 127;
+    }
+
+    return 0;
 }

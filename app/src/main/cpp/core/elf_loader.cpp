@@ -6,6 +6,8 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/auxv.h>
+#include <signal.h>
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
@@ -404,6 +406,13 @@ bool ElfLoader::execute(
     uintptr_t sp = reinterpret_cast<uintptr_t>(stackTop);
 
     LOGI("ElfLoader: Stack prepared at 0x%lx. Jumping to entry: 0x%lx...", (unsigned long)sp, (unsigned long)entryPoint);
+
+    // Unblock SIGSYS so that if this is called from within a signal handler,
+    // the new process will still be able to receive SIGSYS.
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGSYS);
+    sigprocmask(SIG_UNBLOCK, &set, nullptr);
 
     // JUMP! This transfers execution to the loaded ELF / linker64
     jump_to_entry(entryPoint, sp);

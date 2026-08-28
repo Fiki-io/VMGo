@@ -1,6 +1,7 @@
 package com.vmgo.app.core
 
 import android.view.Surface
+import com.vmgo.app.VmGoApp
 import com.vmgo.app.model.VmConfig
 import com.vmgo.app.util.AppLogger
 

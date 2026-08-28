@@ -41,52 +41,6 @@
 
 namespace vmgo {
 
-static std::string getInterpreterPath(const std::string& resolvedPath) {
-    int fd = open(resolvedPath.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return "";
-    
-    unsigned char buf[4096];
-    ssize_t n = read(fd, buf, sizeof(buf));
-    close(fd);
-    
-    if (n >= 4 && buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F') {
-        if (buf[EI_CLASS] == ELFCLASS64) {
-            if (n >= (ssize_t)sizeof(Elf64_Ehdr)) {
-                Elf64_Ehdr* ehdr = reinterpret_cast<Elf64_Ehdr*>(buf);
-                if (ehdr->e_phoff > 0 && ehdr->e_phnum > 0 && ehdr->e_phoff + ehdr->e_phnum * sizeof(Elf64_Phdr) <= (size_t)n) {
-                    Elf64_Phdr* phdr = reinterpret_cast<Elf64_Phdr*>(buf + ehdr->e_phoff);
-                    for (int i = 0; i < ehdr->e_phnum; ++i) {
-                        if (phdr[i].p_type == PT_INTERP) {
-                            return "/system/bin/linker64";
-                        }
-                    }
-                }
-            }
-        } else if (buf[EI_CLASS] == ELFCLASS32) {
-            if (n >= (ssize_t)sizeof(Elf32_Ehdr)) {
-                Elf32_Ehdr* ehdr = reinterpret_cast<Elf32_Ehdr*>(buf);
-                if (ehdr->e_phoff > 0 && ehdr->e_phnum > 0 && ehdr->e_phoff + ehdr->e_phnum * sizeof(Elf32_Phdr) <= (size_t)n) {
-                    Elf32_Phdr* phdr = reinterpret_cast<Elf32_Phdr*>(buf + ehdr->e_phoff);
-                    for (int i = 0; i < ehdr->e_phnum; ++i) {
-                        if (phdr[i].p_type == PT_INTERP) {
-                            return "/system/bin/linker";
-                        }
-                    }
-                }
-            }
-        }
-    } else if (n >= 2 && buf[0] == '#' && buf[1] == '!') {
-        std::string interp;
-        for (ssize_t i = 2; i < n && buf[i] != '\n'; ++i) {
-            if (buf[i] != ' ' || !interp.empty()) {
-                interp += buf[i];
-            }
-        }
-        return interp;
-    }
-    return "";
-}
-
 SeccompTrap& SeccompTrap::getInstance() {
     static SeccompTrap instance;
     return instance;
@@ -430,7 +384,6 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
             
             if (pathname) {
                 std::string resolvedPath = vfs.resolvePath(pathname, 0);
-                std::string interp = getInterpreterPath(resolvedPath);
                 
                 int argc = 0;
                 while (guest_argv && guest_argv[argc]) argc++;
@@ -447,19 +400,15 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
                 
                 std::string rootfs = "";
                 if (SeccompTrap::getInstance().rootfsDfd_ >= 0) {
-                    // We need the rootfs path. It's stored in VmConfiguration, but VfsRouter knows it.
-                    rootfs = "/data/user/0/com.vmgo.app/files/vm_slots/slot_1/rootfs"; // Fallback, vfs router should provide it but we'll use a hack or just pass empty if ElfLoader doesn't strictly need it to be absolute.
-                    // Wait, VfsRouter::getInstance().resolvePath("/") gives the rootfs!
                     rootfs = vfs.resolvePath("/", 0);
                 }
 
                 LOGI("Guest Syscall: execve(%s) intercepted via ElfLoader", resolvedPath.c_str());
-                if (!ElfLoader::execute(rootfs, resolvedPath, interp, new_argv, envVars)) {
+                if (!ElfLoader::execute(resolvedPath, new_argv, envVars, rootfs)) {
                     ret = -ENOEXEC;
                     LOGE("Guest Syscall: ElfLoader failed for %s", resolvedPath.c_str());
                 } else {
                     // ElfLoader::execute will jump to entry and NEVER RETURN here!
-                    // If it does return false, we handled it above.
                 }
             } else {
                 ret = -EFAULT;

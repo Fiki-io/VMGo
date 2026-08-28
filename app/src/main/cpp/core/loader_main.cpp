@@ -71,20 +71,7 @@ int main(int argc, char** argv) {
     }
 
     // 7. Execute target binary via ElfLoader (avoids kernel execve wiping seccomp!)
-    std::string interp = "/system/bin/linker64"; // Default for app_process64
-    
-    // Quick parser for interpreter
-    int fd = open(targetBin.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd >= 0) {
-        unsigned char buf[4096];
-        ssize_t n = read(fd, buf, sizeof(buf));
-        close(fd);
-        if (n >= 4 && buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F') {
-            if (buf[4] == 1) interp = "/system/bin/linker"; // 32-bit
-        }
-    }
-
-    if (!ElfLoader::execute(rootfs, targetBin, interp, targetArgv, envVars)) {
+    if (!ElfLoader::execute(targetBin, targetArgv, envVars, rootfs)) {
         LOGE("VMGo Loader: ElfLoader failed for %s", targetBin.c_str());
         return 127;
     }

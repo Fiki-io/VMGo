@@ -2,6 +2,8 @@
 #include "seccomp_trap.h"
 #include "vfs_router.h"
 #include "elf_loader.h"
+#include "user_kernel.h"
+#include "init_sequencer.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -32,93 +34,9 @@ GuestBootstrapper& GuestBootstrapper::getInstance() {
 }
 
 void GuestBootstrapper::createVirtualDevNodes(const std::string& rootfs) {
-    // Create necessary directory structure inside the sandbox
-    std::vector<std::string> dirs = {
-        rootfs + "/dev",
-        rootfs + "/dev/socket",
-        rootfs + "/dev/input",
-        rootfs + "/proc",
-        rootfs + "/sys",
-        rootfs + "/sys/fs",
-        rootfs + "/sys/fs/selinux",
-        rootfs + "/data",
-        rootfs + "/data/dalvik-cache",
-        rootfs + "/data/dalvik-cache/arm64",
-        rootfs + "/data/app",
-        rootfs + "/data/data",
-        rootfs + "/data/system",
-        rootfs + "/data/misc",
-        rootfs + "/data/local",
-        rootfs + "/data/local/tmp",
-        rootfs + "/cache",
-        rootfs + "/mnt",
-        rootfs + "/mnt/runtime",
-        rootfs + "/storage",
-        rootfs + "/acct",
-        rootfs + "/config",
-        rootfs + "/oem",
-        rootfs + "/metadata",
-    };
-
-    for (const auto& dir : dirs) {
-        mkdir(dir.c_str(), 0755);
-    }
-
-    // Create virtual device files (regular files, not real device nodes)
-    // Our seccomp-BPF will intercept all ioctl/read/write on these
-    auto touchFile = [](const std::string& path) {
-        int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        if (fd >= 0) close(fd);
-    };
-
-    touchFile(rootfs + "/dev/null");
-    touchFile(rootfs + "/dev/zero");
-    touchFile(rootfs + "/dev/random");
-    touchFile(rootfs + "/dev/urandom");
-    touchFile(rootfs + "/dev/binder");
-    touchFile(rootfs + "/dev/hwbinder");
-    touchFile(rootfs + "/dev/vndbinder");
-    touchFile(rootfs + "/dev/ashmem");
-    touchFile(rootfs + "/dev/ion");
-    touchFile(rootfs + "/dev/fuse");
-    touchFile(rootfs + "/dev/tty");
-    touchFile(rootfs + "/dev/ptmx");
-
-    // Create /dev/qemu_pipe as a symlink to our QEMU Pipe socket
-    std::string qemuPipeSock = rootfs + "/dev/qemu_pipe.sock";
-    unlink((rootfs + "/dev/qemu_pipe").c_str());
-    symlink(qemuPipeSock.c_str(), (rootfs + "/dev/qemu_pipe").c_str());
-
-    // Create proc stubs that init may read
-    touchFile(rootfs + "/proc/cmdline");
-    
-    // Write a fake cmdline that guest init expects
-    int cmdFd = open((rootfs + "/proc/cmdline").c_str(), O_WRONLY | O_TRUNC);
-    if (cmdFd >= 0) {
-        const char* cmdline = "androidboot.hardware=vmgo androidboot.selinux=permissive "
-                              "no_timer_check skip_initramfs ro init=/init "
-                              "qemu.dalvik.vm.heapsize=256m\n";
-        write(cmdFd, cmdline, strlen(cmdline));
-        close(cmdFd);
-    }
-
-    // SELinux enforce file (set to permissive)
-    int seFd = open((rootfs + "/sys/fs/selinux/enforce").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (seFd >= 0) {
-        write(seFd, "0", 1);
-        close(seFd);
-    }
-
-    // Create build.prop if not exists
-    std::string buildProp = rootfs + "/system/build.prop";
-    if (access(buildProp.c_str(), F_OK) != 0) {
-        buildProp = rootfs + "/build.prop";
-    }
-
-    // Deploy timezone data fallback
+    UserKernel::getInstance().setupVirtualDevNodes(rootfs);
     setupTimezoneData(rootfs);
-
-    LOGI("Guest bootstrap: Virtual dev nodes created in %s", rootfs.c_str());
+    LOGI("Guest bootstrap: Virtual dev nodes and UserKernel initialized in %s", rootfs.c_str());
 }
 
 void GuestBootstrapper::setupTimezoneData(const std::string& rootfs) {
@@ -230,6 +148,10 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
         LOGW("Guest already running with PID %d", guestPid_);
         return true;
     }
+
+    LOGI("Guest bootstrap: Preparing environment for slot %s...", config.slotId.c_str());
+
+    UserKernel::getInstance().initialize(config);
 
     std::string rootfs = config.rootFsPath;
     std::string systemPath = config.systemPath;
@@ -439,6 +361,8 @@ bool GuestBootstrapper::isAlive() const {
 }
 
 void GuestBootstrapper::kill() {
+    InitSequencer::getInstance().stop();
+    UserKernel::getInstance().reset();
     if (guestPid_ > 0) {
         LOGI("Guest bootstrap: Killing guest PID %d", guestPid_);
         ::kill(guestPid_, SIGKILL);

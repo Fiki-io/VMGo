@@ -1,5 +1,7 @@
 #include "seccomp_trap.h"
 #include "vfs_router.h"
+#include "virtual_binder.h"
+#include "user_kernel.h"
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -138,6 +140,11 @@ bool SeccompTrap::installFilter(int rootfsDfd) {
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
+#ifdef __NR_ioctl
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_ioctl, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
 #ifdef __NR_mknod
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_mknod, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
@@ -262,11 +269,32 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
             if (pathname) {
                 std::string resolved = vfs.resolvePath(pathname, flags);
                 ret = syscall(__NR_openat, dfd, resolved.c_str(), flags, mode);
-                if (ret < 0) {
+                if (ret >= 0) {
+                    if (resolved.find("/dev/binder") != std::string::npos ||
+                        resolved.find("/dev/vndbinder") != std::string::npos ||
+                        resolved.find("/dev/hwbinder") != std::string::npos) {
+                        VirtualBinder::getInstance().registerBinderFd(static_cast<int>(ret), resolved);
+                    }
+                } else {
                     ret = -errno;
                 }
             } else {
                 ret = -EFAULT;
+            }
+            break;
+        }
+#endif
+#ifdef __NR_ioctl
+        case __NR_ioctl: {
+            int targetFd = static_cast<int>(arg0);
+            unsigned long request = static_cast<unsigned long>(arg1);
+            void* argp = reinterpret_cast<void*>(arg2);
+
+            if (VirtualBinder::getInstance().isBinderFd(targetFd)) {
+                ret = VirtualBinder::getInstance().handleIoctl(targetFd, request, argp);
+            } else {
+                ret = syscall(__NR_ioctl, targetFd, request, argp);
+                if (ret < 0) ret = -errno;
             }
             break;
         }
@@ -309,29 +337,45 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 #endif
 #ifdef __NR_mount
         case __NR_mount: {
-            // Guest init tries to mount /proc, /sys, /dev, tmpfs etc.
-            // We already have these as directories in the sandbox
-            ret = 0;
+            const char* src = reinterpret_cast<const char*>(arg0);
+            const char* tgt = reinterpret_cast<const char*>(arg1);
+            const char* fstype = reinterpret_cast<const char*>(arg2);
+            unsigned long mflags = static_cast<unsigned long>(arg3);
+            const void* data = reinterpret_cast<const void*>(uctx->uc_mcontext.regs[4]);
+            ret = UserKernel::getInstance().sysMount(src, tgt, fstype, mflags, data);
             break;
         }
 #endif
 #ifdef __NR_umount2
         case __NR_umount2: {
-            ret = 0;
+            const char* tgt = reinterpret_cast<const char*>(arg0);
+            int flags = static_cast<int>(arg1);
+            ret = UserKernel::getInstance().sysUmount(tgt, flags);
             break;
         }
 #endif
 #ifdef __NR_pivot_root
         case __NR_pivot_root: {
-            ret = 0;
+            const char* nroot = reinterpret_cast<const char*>(arg0);
+            const char* pold = reinterpret_cast<const char*>(arg1);
+            ret = UserKernel::getInstance().sysPivotRoot(nroot, pold);
             break;
         }
 #endif
 #ifdef __NR_chroot
         case __NR_chroot: {
-            // Guest tries to chroot into the rootfs
-            // We handle this via VFS path redirection instead
-            ret = 0;
+            const char* path = reinterpret_cast<const char*>(arg0);
+            ret = UserKernel::getInstance().sysChroot(path);
+            break;
+        }
+#endif
+#ifdef __NR_mknodat
+        case __NR_mknodat: {
+            int dirFd = static_cast<int>(arg0);
+            const char* pathname = reinterpret_cast<const char*>(arg1);
+            mode_t mode = static_cast<mode_t>(arg2);
+            dev_t dev = static_cast<dev_t>(arg3);
+            ret = UserKernel::getInstance().sysMknodat(dirFd, pathname, mode, dev);
             break;
         }
 #endif

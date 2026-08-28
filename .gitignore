@@ -14,3 +14,4 @@ local.properties
 *.img.xz
 *.zip
 !app/src/main/assets/**/*.zip
+twoyi_src/

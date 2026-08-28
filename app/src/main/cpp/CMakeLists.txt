@@ -22,6 +22,9 @@ add_library(
     core/seccomp_trap.cpp
     core/guest_bootstrapper.cpp
     core/elf_loader.cpp
+    core/virtual_binder.cpp
+    core/user_kernel.cpp
+    core/init_sequencer.cpp
     hal/qemu_pipe_server.cpp
     graphics/egl_renderer.cpp
     input/input_dispatcher.cpp

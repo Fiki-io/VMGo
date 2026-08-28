@@ -104,7 +104,19 @@ std::string VfsRouter::resolvePath(const std::string& guestPath, int /* flags */
 
         if (clean.rfind(prefix + "/", 0) == 0) {
             std::string subPath = clean.substr(prefix.length());
-            return hostBase + subPath;
+            std::string target = hostBase + subPath;
+
+            // If file or directory exists in sandbox rootfs, return sandbox path
+            if (access(target.c_str(), F_OK) == 0) {
+                return target;
+            }
+
+            // Fallback: If missing from sandbox, but available on host phone OS (/apex, /system/etc, /system/usr)
+            if (access(clean.c_str(), F_OK) == 0) {
+                return clean;
+            }
+
+            return target;
         }
     }
 

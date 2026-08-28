@@ -39,6 +39,28 @@ void GuestBootstrapper::createVirtualDevNodes(const std::string& rootfs) {
     LOGI("Guest bootstrap: Virtual dev nodes and UserKernel initialized in %s", rootfs.c_str());
 }
 
+static bool copyFile(const std::string& src, const std::string& dst) {
+    int sFd = open(src.c_str(), O_RDONLY);
+    if (sFd < 0) return false;
+
+    unlink(dst.c_str());
+    int dFd = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dFd < 0) {
+        close(sFd);
+        return false;
+    }
+
+    char buf[4096];
+    ssize_t bytes;
+    while ((bytes = read(sFd, buf, sizeof(buf))) > 0) {
+        write(dFd, buf, bytes);
+    }
+
+    close(sFd);
+    close(dFd);
+    return true;
+}
+
 void GuestBootstrapper::setupTimezoneData(const std::string& rootfs) {
     std::string apexTzDir = rootfs + "/apex/com.android.tzdata/etc/tz";
     std::string sysTzDir = rootfs + "/system/usr/share/zoneinfo";
@@ -65,7 +87,7 @@ void GuestBootstrapper::setupTimezoneData(const std::string& rootfs) {
         for (const auto& hDir : hostSearchDirs) {
             std::string hFile = hDir + "/" + fname;
             if (access(hFile.c_str(), R_OK) == 0) {
-                // Ensure symlinks exist in all candidate guest directories
+                // Ensure real copied files exist in all candidate guest directories
                 std::vector<std::string> targets = {
                     apexTzDir + "/" + fname,
                     sysTzDir + "/" + fname,
@@ -74,7 +96,7 @@ void GuestBootstrapper::setupTimezoneData(const std::string& rootfs) {
                 };
                 for (const auto& tgt : targets) {
                     if (access(tgt.c_str(), F_OK) != 0) {
-                        symlink(hFile.c_str(), tgt.c_str());
+                        copyFile(hFile, tgt);
                     }
                 }
                 break;

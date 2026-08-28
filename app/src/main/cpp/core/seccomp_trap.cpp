@@ -145,6 +145,11 @@ bool SeccompTrap::installFilter(int rootfsDfd) {
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 #endif
 
+#ifdef __NR_readlinkat
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_readlinkat, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+#endif
+
 #ifdef __NR_mknod
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_mknod, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
@@ -268,7 +273,8 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 
             if (pathname) {
                 std::string resolved = vfs.resolvePath(pathname, flags);
-                ret = syscall(__NR_openat, dfd, resolved.c_str(), flags, mode);
+                int targetDfd = (resolved.empty() || resolved[0] == '/') ? AT_FDCWD : dfd;
+                ret = syscall(__NR_openat, targetDfd, resolved.c_str(), flags, mode);
                 if (ret >= 0) {
                     if (resolved.find("/dev/binder") != std::string::npos ||
                         resolved.find("/dev/vndbinder") != std::string::npos ||
@@ -307,7 +313,8 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 
             if (pathname) {
                 std::string resolved = vfs.resolvePath(pathname, 0);
-                ret = syscall(__NR_faccessat, dfd, resolved.c_str(), mode, flags);
+                int targetDfd = (resolved.empty() || resolved[0] == '/') ? AT_FDCWD : dfd;
+                ret = syscall(__NR_faccessat, targetDfd, resolved.c_str(), mode, flags);
                 if (ret < 0) {
                     ret = -errno;
                 }
@@ -325,7 +332,27 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 
             if (pathname) {
                 std::string resolved = vfs.resolvePath(pathname, 0);
-                ret = syscall(__NR_newfstatat, dfd, resolved.c_str(), statbuf, flags);
+                int targetDfd = (resolved.empty() || resolved[0] == '/') ? AT_FDCWD : dfd;
+                ret = syscall(__NR_newfstatat, targetDfd, resolved.c_str(), statbuf, flags);
+                if (ret < 0) {
+                    ret = -errno;
+                }
+            } else {
+                ret = -EFAULT;
+            }
+            break;
+        }
+#endif
+#ifdef __NR_readlinkat
+        case __NR_readlinkat: {
+            const char* pathname = reinterpret_cast<const char*>(arg1);
+            char* buf = reinterpret_cast<char*>(arg2);
+            size_t bufsiz = static_cast<size_t>(arg3);
+
+            if (pathname) {
+                std::string resolved = vfs.resolvePath(pathname, 0);
+                int targetDfd = (resolved.empty() || resolved[0] == '/') ? AT_FDCWD : dfd;
+                ret = syscall(__NR_readlinkat, targetDfd, resolved.c_str(), buf, bufsiz);
                 if (ret < 0) {
                     ret = -errno;
                 }

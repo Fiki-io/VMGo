@@ -1,6 +1,7 @@
 #include "guest_bootstrapper.h"
 #include "seccomp_trap.h"
 #include "vfs_router.h"
+#include "elf_loader.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -317,13 +318,28 @@ bool GuestBootstrapper::launch(const VmConfiguration& config, LogCallback onLog)
             };
         }
 
-        LOGI("Guest bootstrap: execve(%s) with %zu args", initBin.c_str(), argv.size() - 1);
+        LOGI("Guest bootstrap: Launching %s (%zu args)...", initBin.c_str(), argv.size() - 1);
 
-        // EXEC! This replaces the child process with the guest init
-        execve(initBin.c_str(), const_cast<char* const*>(argv.data()), environ);
+        // 1. Launch via User-Space ELF Loader (In-Memory execution bypassing Android 10+ SELinux execve restrictions)
+        std::vector<std::string> argsList;
+        for (size_t i = 0; i < argv.size() - 1; ++i) {
+            if (argv[i]) argsList.emplace_back(argv[i]);
+        }
 
-        // If we reach here, execve failed
-        fprintf(stderr, "Guest: execve(%s) FAILED: %s (errno=%d)\n",
+        std::vector<std::string> envList;
+        for (char** env = environ; *env != nullptr; ++env) {
+            envList.emplace_back(*env);
+        }
+
+        bool loaderStarted = ElfLoader::execute(initBin, argsList, envList, rootfs);
+        if (!loaderStarted) {
+            // 2. Fallback to standard execve
+            LOGW("Guest bootstrap: ElfLoader failed to start, attempting execve fallback...");
+            execve(initBin.c_str(), const_cast<char* const*>(argv.data()), environ);
+        }
+
+        // If we reach here, both ElfLoader and execve failed
+        fprintf(stderr, "Guest: Launch FAILED for %s: %s (errno=%d)\n",
                 initBin.c_str(), strerror(errno), errno);
         _exit(127);
     }

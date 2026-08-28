@@ -284,6 +284,7 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
                 } else {
                     ret = -errno;
                 }
+                LOGI("Guest Syscall: openat(%s) -> %s [fd=%ld]", pathname, resolved.c_str(), (long)ret);
             } else {
                 ret = -EFAULT;
             }
@@ -298,6 +299,7 @@ void SeccompTrap::sigsysHandler(int /* sig */, siginfo_t* info, void* context) {
 
             if (VirtualBinder::getInstance().isBinderFd(targetFd)) {
                 ret = VirtualBinder::getInstance().handleIoctl(targetFd, request, argp);
+                LOGI("Guest Syscall: ioctl(Binder fd=%d, req=0x%lx) -> %ld", targetFd, request, (long)ret);
             } else {
                 ret = syscall(__NR_ioctl, targetFd, request, argp);
                 if (ret < 0) ret = -errno;
